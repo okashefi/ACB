@@ -26,7 +26,7 @@ import {
   RealizedGainLoss,
   SuperficialLossEvent,
 } from '../types/tax';
-import { formatCad, formatShares, formatRate } from '../engine/decimal';
+import { formatCad, formatShares, formatRate, d, toMoney } from '../engine/decimal';
 
 interface ReportsViewProps {
   engineOutput: CalculationEngineOutput;
@@ -74,19 +74,25 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   // Totals for Schedule 3
   const schedule3Totals = useMemo(() => {
-    let grossProceeds = 0;
-    let outlays = 0;
-    let acbRemoved = 0;
-    let recognized = 0;
+    let grossProceeds = d(0);
+    let outlays = d(0);
+    let acbRemoved = d(0);
+    let recognized = d(0);
 
     filteredRealizedGains.forEach((g) => {
-      grossProceeds += g.grossProceedsCad;
-      outlays += g.dispositionOutlaysCad;
-      acbRemoved += g.acbOfUnitsDisposedCad;
-      recognized += g.recognizedGainLossCad;
+      grossProceeds = grossProceeds.plus(d(g.grossProceedsCad));
+      outlays = outlays.plus(d(g.dispositionOutlaysCad));
+      acbRemoved = acbRemoved.plus(d(g.acbOfUnitsDisposedCad));
+      recognized = recognized.plus(d(g.recognizedGainLossCad));
     });
 
-    return { grossProceeds, outlays, acbRemoved, recognized };
+    return {
+      grossProceeds: grossProceeds.toString(),
+      outlays: outlays.toString(),
+      acbRemoved: acbRemoved.toString(),
+      recognized: recognized.toString(),
+      recognizedIsPos: recognized.gte(0),
+    };
   }, [filteredRealizedGains]);
 
   // 3. Superficial Losses
@@ -117,12 +123,12 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       g.dispositionDate,
       `"${g.securityName.replace(/"/g, '""')}"`,
       g.symbol,
-      g.quantityDisposed,
-      g.grossProceedsCad.toFixed(2),
-      g.acbOfUnitsDisposedCad.toFixed(2),
-      g.dispositionOutlaysCad.toFixed(2),
-      g.superficialLossDeniedCad.toFixed(2),
-      g.recognizedGainLossCad.toFixed(2),
+      formatShares(g.quantityDisposed),
+      toMoney(g.grossProceedsCad),
+      toMoney(g.acbOfUnitsDisposedCad),
+      toMoney(g.dispositionOutlaysCad),
+      toMoney(g.superficialLossDeniedCad),
+      toMoney(g.recognizedGainLossCad),
       `"${g.statutoryCitations.join('; ')}"`,
     ]);
 
@@ -131,7 +137,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       `# Tax Year: ${selectedTaxYear} | Currency: Canadian Dollars (CAD) | Converted via Bank of Canada Daily Rates`,
       headers.join(','),
       ...rows.map((r) => r.join(',')),
-      `TOTALS,,,,,"${schedule3Totals.grossProceeds.toFixed(2)}","${schedule3Totals.acbRemoved.toFixed(2)}","${schedule3Totals.outlays.toFixed(2)}",,"${schedule3Totals.recognized.toFixed(2)}"`,
+      `TOTALS,,,,,"${toMoney(schedule3Totals.grossProceeds)}","${toMoney(schedule3Totals.acbRemoved)}","${toMoney(schedule3Totals.outlays)}",,"${toMoney(schedule3Totals.recognized)}"`,
     ].join('\n');
 
     const encodedUri = encodeURI(csvContent);
@@ -321,8 +327,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       <td className="py-3 px-3 text-right font-medium text-[#18181B]">{formatCad(rf.openingAcbCad)}</td>
                       <td className="py-3 px-3 text-right text-[#059669]">+{formatCad(rf.acquisitionsCostCad)}</td>
                       <td className="py-3 px-3 text-right text-[#DC2626]">-{formatCad(rf.dispositionsAcbRemovedCad)}</td>
-                      <td className="py-3 px-3 text-right text-[#D97706]">{rf.rocAdjustmentsCad > 0 ? `-${formatCad(rf.rocAdjustmentsCad)}` : '—'}</td>
-                      <td className="py-3 px-3 text-right text-[#7C3AED]">{rf.superficialLossAdditionsCad > 0 ? `+${formatCad(rf.superficialLossAdditionsCad)}` : '—'}</td>
+                      <td className="py-3 px-3 text-right text-[#D97706]">{d(rf.rocAdjustmentsCad).gt(0) ? `-${formatCad(rf.rocAdjustmentsCad)}` : '—'}</td>
+                      <td className="py-3 px-3 text-right text-[#7C3AED]">{d(rf.superficialLossAdditionsCad).gt(0) ? `+${formatCad(rf.superficialLossAdditionsCad)}` : '—'}</td>
                       <td className="py-3 px-3 text-right font-bold text-[#18181B]">{formatShares(rf.closingQuantity)}</td>
                       <td className="py-3 px-3 text-right font-bold text-[#059669]">{formatCad(rf.closingTotalAcbCad)}</td>
                       <td className="py-3 px-3 text-right text-[#18181B] font-semibold">{formatCad(rf.closingAcbPerUnitCad)}</td>
@@ -366,8 +372,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
             <div className="p-4 bg-white border border-[#BFDBFE] rounded-2xl shadow-2xs bg-[#EFF6FF]">
               <div className="text-[10px] text-[#1D4ED8] uppercase font-sans font-semibold">Schedule 3 Net Capital Gain / (Loss)</div>
-              <div className={`text-base font-bold mt-1 ${schedule3Totals.recognized >= 0 ? 'text-[#059669]' : 'text-[#DC2626]'}`}>
-                {schedule3Totals.recognized >= 0 ? `+${formatCad(schedule3Totals.recognized)}` : formatCad(schedule3Totals.recognized)}
+              <div className={`text-base font-bold mt-1 ${schedule3Totals.recognizedIsPos ? 'text-[#059669]' : 'text-[#DC2626]'}`}>
+                {schedule3Totals.recognizedIsPos ? `+${formatCad(schedule3Totals.recognized)}` : formatCad(schedule3Totals.recognized)}
               </div>
             </div>
           </div>
@@ -413,15 +419,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       <td className="py-3 px-3 text-right text-[#71717A]">{formatCad(g.acbOfUnitsDisposedCad)}</td>
                       <td className="py-3 px-3 text-right text-[#71717A]">{formatCad(g.dispositionOutlaysCad)}</td>
                       <td className="py-3 px-3 text-right">
-                        {g.superficialLossDeniedCad > 0 ? (
+                        {d(g.superficialLossDeniedCad).gt(0) ? (
                           <span className="text-[#7C3AED] font-semibold">+{formatCad(g.superficialLossDeniedCad)}</span>
                         ) : (
                           <span className="text-[#D4D4D8]">—</span>
                         )}
                       </td>
                       <td className="py-3 px-3 text-right font-bold">
-                        <span className={g.recognizedGainLossCad >= 0 ? 'text-[#059669]' : 'text-[#DC2626]'}>
-                          {g.recognizedGainLossCad >= 0 ? `+${formatCad(g.recognizedGainLossCad)}` : formatCad(g.recognizedGainLossCad)}
+                        <span className={d(g.recognizedGainLossCad).gte(0) ? 'text-[#059669]' : 'text-[#DC2626]'}>
+                          {d(g.recognizedGainLossCad).gte(0) ? `+${formatCad(g.recognizedGainLossCad)}` : formatCad(g.recognizedGainLossCad)}
                         </span>
                       </td>
                       <td className="py-3 px-3 text-center">

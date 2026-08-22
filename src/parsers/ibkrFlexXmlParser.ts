@@ -397,6 +397,27 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
         txType = (type.includes('PUT') || symbol.includes('P')) ? 'EXERCISE_LONG_PUT' : 'EXERCISE_LONG_CALL';
       }
 
+      // Check if already present from Trades section (share tradeID or date+symbol+qty)
+      const existingTradeIndex = transactions.findIndex((t) => {
+        if (t.ibkrTransactionId && optId && t.ibkrTransactionId === optId) return true;
+        if (t.id === `IBKR_TR_${optId}` || t.id === `IBKR_OPT_${optId}`) return true;
+        if (t.date === date && t.symbol === symbol) {
+          const tQty = Math.abs(parseFloat(t.quantity || '0'));
+          if (tQty === qty || tQty === qty * 100) return true;
+        }
+        return false;
+      });
+
+      if (existingTradeIndex >= 0) {
+        // Update existing trade row with linked option exercise type and code
+        const existing = transactions[existingTradeIndex];
+        existing.ibkrCode = existing.ibkrCode || code || type;
+        if (!existing.transactionType.includes('ASSIGNED') && !existing.transactionType.includes('EXERCISE')) {
+          existing.transactionType = txType;
+        }
+        continue;
+      }
+
       transactions.push({
         id: `IBKR_OPT_${optId}`,
         accountId: opt.accountId || 'U_DEFAULT',

@@ -1,4 +1,4 @@
-import { d, toRate } from './decimal';
+import { d, toMoney } from './decimal';
 
 // In-memory fallback and historical seed rates for Bank of Canada daily noon / closing rates
 // Rates are USD/CAD, EUR/CAD, GBP/CAD (e.g. 1 USD = 1.35 CAD)
@@ -79,14 +79,14 @@ export function registerFxRate(date: string, currency: string, rate: number): vo
  * Convert foreign currency amount to CAD on a specific transaction date.
  */
 export function convertToCad(
-  amount: number,
+  amount: number | string | Decimal,
   currency: string,
   date: string,
   explicitRate?: number
-): { amountCad: number; fxRate: number; fxSource: 'BANK_OF_CANADA' | 'IBKR_ACTUAL' | 'MANUAL_OVERRIDE' } {
+): { amountCad: string; fxRate: number; fxSource: 'BANK_OF_CANADA' | 'IBKR_ACTUAL' | 'MANUAL_OVERRIDE' } {
   if (currency.toUpperCase() === 'CAD') {
     return {
-      amountCad: amount,
+      amountCad: toMoney(amount),
       fxRate: 1.0,
       fxSource: 'BANK_OF_CANADA',
     };
@@ -94,7 +94,7 @@ export function convertToCad(
 
   if (explicitRate && explicitRate > 0) {
     const rate = explicitRate;
-    const amountCad = d(amount).times(rate).toNumber();
+    const amountCad = toMoney(d(amount).times(rate));
     return {
       amountCad,
       fxRate: rate,
@@ -103,7 +103,7 @@ export function convertToCad(
   }
 
   const rate = getBankOfCanadaRate(date, currency);
-  const amountCad = d(amount).times(rate).toNumber();
+  const amountCad = toMoney(d(amount).times(rate));
   return {
     amountCad,
     fxRate: rate,

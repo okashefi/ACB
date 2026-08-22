@@ -9,6 +9,8 @@ import {
   SecurityRollforward,
   CalculationEngineOutput,
   TaxSettings,
+  OpenPosition,
+  ReconciliationBreak,
 } from '../types/tax';
 import { calculateCorporateAction } from './corporateActions';
 import { evaluateOptionTaxEffect, OptionPositionState, getOptionSeriesKey } from './optionMatrix';
@@ -541,27 +543,40 @@ export function runAcbEngine(
 
       let finalRecognizedGainLoss = rawGainLoss;
 
-      if (slCheck.isSuperficial) {
-        finalRecognizedGainLoss = d(slCheck.allowedLossCad).negated();
+      const acct = accountMap.get(tx.accountId);
+      const isRegisteredTransfer = acct
+        ? ['tfsa', 'rrsp', 'rrif', 'fhsa', 'resp', 'rdsp', 'lira', 'other_registered'].includes(acct.accountType)
+        : (tx.reviewNotes || '').toUpperCase().includes('TFSA') || (tx.reviewNotes || '').toUpperCase().includes('RRSP') || (tx.reviewNotes || '').toUpperCase().includes('FHSA');
+
+      const isTaxableToTaxableTransfer = tx.transactionType === 'TRANSFER_OUT' && !isRegisteredTransfer;
+
+      if (isTaxableToTaxableTransfer) {
+        // Same-taxpayer taxable-to-taxable transfer = no disposition
+        finalRecognizedGainLoss = d(0);
+      } else if (slCheck.isSuperficial || (tx.transactionType === 'TRANSFER_OUT' && isRegisteredTransfer && isLoss)) {
+        // Transfers into tfsa/rrsp/fhsa = deemed disposition at FMV + superficial loss check
+        const deniedAmt = isRegisteredTransfer && isLoss ? rawGainLoss.abs() : slCheck.deniedLossCad;
+        const allowedAmt = isRegisteredTransfer && isLoss ? d(0) : slCheck.allowedLossCad;
+        finalRecognizedGainLoss = d(allowedAmt).negated();
 
         superficialLosses.push({
           dispositionTransactionId: tx.id,
           securityId: tx.securityId,
           symbol: tx.symbol,
           dispositionDate: tx.date,
-          rawCapitalLossCad: slCheck.rawLossCad,
-          deniedLossCad: slCheck.deniedLossCad,
-          allowedLossCad: slCheck.allowedLossCad,
+          rawCapitalLossCad: toMoney(rawGainLoss.abs()),
+          deniedLossCad: toMoney(deniedAmt),
+          allowedLossCad: toMoney(allowedAmt),
           replacementTransactionId: slCheck.replacementTransactionId,
           replacementAccountId: slCheck.replacementAccountId,
           replacementDate: slCheck.replacementDate,
-          isPermanentlyDeniedInRegistered: slCheck.isPermanentlyDeniedInRegistered,
+          isPermanentlyDeniedInRegistered: isRegisteredTransfer || slCheck.isPermanentlyDeniedInRegistered,
           status: slCheck.status,
-          explanation: slCheck.explanation,
+          explanation: isRegisteredTransfer ? 'Loss on transfer to registered account (TFSA/RRSP/FHSA) permanently denied under ITA s. 40(2)(g)(iv).' : slCheck.explanation,
         });
 
         // Add denied loss back to replacement ACB if in taxable account
-        if (!slCheck.isPermanentlyDeniedInRegistered && d(slCheck.deniedLossCad).isPositive()) {
+        if (!isRegisteredTransfer && !slCheck.isPermanentlyDeniedInRegistered && d(slCheck.deniedLossCad).isPositive()) {
           book.totalAcbCad = book.totalAcbCad.plus(d(slCheck.deniedLossCad));
           book.acbPerUnitCad = book.quantity.isPositive() ? book.totalAcbCad.dividedBy(book.quantity) : new Decimal(0);
 
@@ -757,4 +772,42 @@ export function runAcbEngine(
     totalNetRealizedGainLossCad: toMoney(totalGain.minus(totalLoss)),
     auditTrail,
   };
+}
+
+export function reconcilePositions(
+  securityBalances: Map<string, { symbol: string; quantity: string; totalAcbCad: string }>,
+  openPositions: OpenPosition[]
+): ReconciliationBreak[] {
+  const breaks: ReconciliationBreak[] = [];
+  const openPosMap = new Map<string, Decimal>();
+
+  openPositions.forEach((pos) => {
+    const symbol = pos.symbol;
+    if (!symbol) return;
+    const qty = d(pos.quantity || '0');
+    const existing = openPosMap.get(symbol) || d(0);
+    openPosMap.set(symbol, existing.plus(qty));
+  });
+
+  securityBalances.forEach((bal, secId) => {
+    const calcQty = d(bal.quantity);
+    if (calcQty.isPositive()) {
+      const brokerReported = openPosMap.get(bal.symbol) || d(0);
+      const diff = calcQty.minus(brokerReported).abs();
+      if (diff.greaterThan(0.0001)) {
+        breaks.push({
+          securityId: secId,
+          symbol: bal.symbol,
+          calculatedQuantity: bal.quantity,
+          brokerReportedQuantity: brokerReported.toString(),
+          quantityDiscrepancy: calcQty.minus(brokerReported).toString(),
+          calculatedAcbCad: bal.totalAcbCad,
+          status: 'QUANTITY_BREAK',
+          explanation: `Calculated quantity (${bal.quantity}) differs from IBKR Open Position (${brokerReported.toString()})`,
+        });
+      }
+    }
+  });
+
+  return breaks;
 }

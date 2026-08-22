@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Transaction, Account, SecurityMaster, TransactionType, CorporateActionTreatment } from '../types/tax';
 import { d, toMoney, toShares } from '../engine/decimal';
+import { convertToCad } from '../engine/bocFx';
 
 interface ManualEntryModalProps {
   isOpen: boolean;
@@ -78,18 +79,13 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    const fxRateVal = currency === 'CAD' ? '1.0' : useFxOverride ? customFxRate : '1.3500';
-    const fxSource = currency === 'CAD' ? 'BANK_OF_CANADA' : useFxOverride ? 'MANUAL_OVERRIDE' : 'BANK_OF_CANADA';
+    let savedQuantity = quantity;
     const qtyVal = parseFloat(quantity) || 0;
     const priceVal = parseFloat(price) || 0;
     const commVal = parseFloat(commission) || 0;
-    const fxNum = parseFloat(fxRateVal) || 1.0;
 
     let targetTxType = txType;
     let computedGross = qtyVal * priceVal;
-    let computedAmountCad = (computedGross * fxNum).toFixed(2);
-    let computedCommCad = (commVal * fxNum).toFixed(2);
-    let computedTotalOutlays = computedCommCad;
     let txSymbol = symbol.toUpperCase().trim();
 
     let corporateActionDetails = undefined;
@@ -98,7 +94,7 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({
     // 1. OPENING ACB MODE
     if (mode === 'OPENING_ACB') {
       targetTxType = 'OPENING_BALANCE';
-      computedAmountCad = parseFloat(openingTotalAcbCad).toFixed(2);
+      computedGross = parseFloat(openingTotalAcbCad) || 0;
     }
 
     // 2. CA WIZARD MODE
@@ -140,33 +136,49 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({
     // 3. EXERCISE WIZARD MODE
     if (mode === 'EXERCISE_WIZARD') {
       const totalShares = (parseFloat(contractsCount) || 1) * 100;
+      savedQuantity = totalShares.toString();
       const strike = parseFloat(strikePrice) || 0;
       const premTotal = (parseFloat(premiumPaidPerContract) || 0) * (parseFloat(contractsCount) || 1) * 100;
 
       if (optionAction === 'EXERCISE' && optionType === 'CALL') {
         targetTxType = 'EXERCISE_LONG_CALL';
         // Under ITA s. 49(3): Share ACB = (Shares * Strike) + Call Premium Paid
-        const shareGross = totalShares * strike + premTotal;
-        computedAmountCad = (shareGross * fxNum).toFixed(2);
-        setQuantity(totalShares.toString());
+        computedGross = totalShares * strike + premTotal;
       } else if (optionAction === 'ASSIGNMENT' && optionType === 'PUT') {
         targetTxType = 'ASSIGNED_SHORT_PUT';
         // Under ITA s. 49(4): Share ACB = (Shares * Strike) - Put Premium Received
-        const shareGross = totalShares * strike - premTotal;
-        computedAmountCad = (shareGross * fxNum).toFixed(2);
-        setQuantity(totalShares.toString());
+        computedGross = totalShares * strike - premTotal;
       } else if (optionAction === 'EXERCISE' && optionType === 'PUT') {
         targetTxType = 'EXERCISE_LONG_PUT';
         // Under ITA s. 49(4): Sale Proceeds = (Shares * Strike) - Put Premium Paid
-        const shareGross = totalShares * strike - premTotal;
-        computedAmountCad = (shareGross * fxNum).toFixed(2);
-        setQuantity(totalShares.toString());
+        computedGross = totalShares * strike - premTotal;
       } else {
         targetTxType = 'ASSIGNED_SHORT_CALL';
         // Under ITA s. 49(4): Sale Proceeds = (Shares * Strike) + Call Premium Received
-        const shareGross = totalShares * strike + premTotal;
-        computedAmountCad = (shareGross * fxNum).toFixed(2);
-        setQuantity(totalShares.toString());
+        computedGross = totalShares * strike + premTotal;
+      }
+    }
+
+    // FX Conversion via convertToCad unless override is on
+    let fxRateVal = '1.0';
+    let fxSource: 'BANK_OF_CANADA' | 'IBKR_ACTUAL' | 'MANUAL_OVERRIDE' = 'BANK_OF_CANADA';
+    let computedAmountCad = toMoney(computedGross);
+    let computedCommCad = toMoney(commVal);
+
+    if (currency !== 'CAD') {
+      if (useFxOverride) {
+        const rate = parseFloat(customFxRate) || 1.35;
+        fxRateVal = customFxRate;
+        fxSource = 'MANUAL_OVERRIDE';
+        computedAmountCad = toMoney(d(computedGross).times(rate));
+        computedCommCad = toMoney(d(commVal).times(rate));
+      } else {
+        const grossCadInfo = convertToCad(computedGross, currency, date);
+        const commCadInfo = convertToCad(commVal, currency, date);
+        computedAmountCad = grossCadInfo.amountCad;
+        computedCommCad = commCadInfo.amountCad;
+        fxRateVal = String(grossCadInfo.fxRate);
+        fxSource = grossCadInfo.fxSource;
       }
     }
 
@@ -176,18 +188,20 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({
       securityId: txSymbol,
       symbol: txSymbol,
       date,
-      transactionType: isExcludedFromTax ? 'TRANSFER_IN' : targetTxType,
-      quantity: quantity,
+      transactionType: targetTxType,
+      isExcludedFromTax: isExcludedFromTax,
+      exclusionReason: isExcludedFromTax ? exclusionReason : undefined,
+      quantity: savedQuantity,
       price: price,
       currency: currency,
       commission: commission,
-      totalGrossAmount: computedGross.toFixed(2),
-      totalNetAmount: (computedGross + commVal).toFixed(2),
+      totalGrossAmount: toMoney(computedGross),
+      totalNetAmount: toMoney(d(computedGross).plus(commVal)),
       fxRate: fxRateVal,
-      fxRateSource: fxSource as any,
+      fxRateSource: fxSource,
       amountCad: computedAmountCad,
       commissionCad: computedCommCad,
-      totalOutlaysCad: computedTotalOutlays,
+      totalOutlaysCad: computedCommCad,
       corporateAction: corporateActionDetails,
       linkedOptionTransactionId: linkedOptionId,
       status: 'approved',
@@ -203,7 +217,7 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({
           id: txSymbol,
           symbol: txSymbol,
           name: txSymbol,
-          assetClass: mode === 'EXERCISE_WIZARD' ? 'OPT' : 'STK',
+          assetClass: 'STK',
           currency: currency,
           countryOfOrigin: currency === 'CAD' ? 'CA' : 'US',
         };

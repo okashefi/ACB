@@ -19,7 +19,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { CalculationEngineOutput, AcbLedgerEntry, SecurityMaster, Transaction } from '../types/tax';
-import { formatCad, formatShares, formatRate } from '../engine/decimal';
+import { formatCad, formatShares, formatRate, d } from '../engine/decimal';
 
 interface LedgerViewProps {
   engineOutput: CalculationEngineOutput;
@@ -265,9 +265,9 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             </thead>
             <tbody className="divide-y divide-[#E4E4E7] font-mono">
               {filteredEntries.map((entry) => {
-                const isBuy = entry.quantityChange > 0;
-                const isSell = entry.quantityChange < 0;
-                const hasGain = entry.realizedGainLossCad !== undefined && entry.realizedGainLossCad >= 0;
+                const isBuy = d(entry.quantityChange).gt(0);
+                const isSell = d(entry.quantityChange).lt(0);
+                const hasGain = entry.realizedGainLossCad !== undefined && d(entry.realizedGainLossCad).gte(0);
                 const isOptionLinked = entry.transactionType.includes('OPT') || entry.transactionType.includes('EXERCISE') || entry.transactionType.includes('ASSIGNED');
 
                 return (
@@ -311,7 +311,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
 
                     {/* Qty Delta */}
                     <td className={`py-3 px-3 text-right font-medium ${isBuy ? 'text-[#059669]' : isSell ? 'text-[#DC2626]' : 'text-[#71717A]'}`}>
-                      {entry.quantityChange > 0 ? `+${formatShares(entry.quantityChange)}` : formatShares(entry.quantityChange)}
+                      {d(entry.quantityChange).gt(0) ? `+${formatShares(entry.quantityChange)}` : formatShares(entry.quantityChange)}
                     </td>
 
                     {/* Running Qty */}
@@ -320,8 +320,8 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                     </td>
 
                     {/* Cost Delta CAD */}
-                    <td className={`py-3 px-3 text-right ${entry.costChangeCad >= 0 ? 'text-[#059669]' : 'text-[#71717A]'}`}>
-                      {entry.costChangeCad >= 0 ? `+${formatCad(entry.costChangeCad)}` : formatCad(entry.costChangeCad)}
+                    <td className={`py-3 px-3 text-right ${d(entry.costChangeCad).gte(0) ? 'text-[#059669]' : 'text-[#71717A]'}`}>
+                      {d(entry.costChangeCad).gte(0) ? `+${formatCad(entry.costChangeCad)}` : formatCad(entry.costChangeCad)}
                     </td>
 
                     {/* Running Total ACB CAD */}

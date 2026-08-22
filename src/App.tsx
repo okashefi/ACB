@@ -12,7 +12,7 @@ import { TestSuiteView } from './components/TestSuiteView';
 import { ManualEntryModal } from './components/ManualEntryModal';
 import { ImportModal } from './components/ImportModal';
 import { HelpView } from './components/HelpView';
-import { runAcbEngine } from './engine/acbEngine';
+import { runAcbEngine, reconcilePositions } from './engine/acbEngine';
 import { d } from './engine/decimal';
 import { fetchIbkrFlexStatement, generateSandboxFlexXml } from './services/ibkrFlexService';
 import { parseIbkrFlexXml } from './parsers/ibkrFlexXmlParser';
@@ -58,10 +58,12 @@ export function App() {
     isDayTraderWarningAcknowledged: false,
     capitalGainsInclusionRate: '0.50',
     inclusionRateRulesByYear: {
-      2024: { baseRate: '0.50', highThresholdRate: '0.6667', thresholdCad: '250000' },
+      2026: { baseRate: '0.50' },
+      2025: { baseRate: '0.50' },
+      2024: { baseRate: '0.50' },
       2023: { baseRate: '0.50' },
     },
-    cpaReviewDisclaimerAcknowledged: true,
+    cpaReviewDisclaimerAcknowledged: false,
   });
 
   // Load from localStorage or seed initial sandbox demo data on first load
@@ -172,33 +174,7 @@ export function App() {
 
   // Reconciliation Breaks Check (Calculated share balances vs IBKR Open Positions)
   const reconciliationBreaks = useMemo<ReconciliationBreak[]>(() => {
-    const breaks: ReconciliationBreak[] = [];
-    const openPosMap = new Map<string, number>();
-    openPositions.forEach((pos) => {
-      openPosMap.set(pos.symbol, (openPosMap.get(pos.symbol) || 0) + pos.position);
-    });
-
-    engineOutput.securityBalances.forEach((bal, secId) => {
-      const calcQty = d(bal.quantity);
-      if (calcQty.isPositive()) {
-        const brokerReported = openPosMap.get(bal.symbol) || 0;
-        const diff = calcQty.minus(brokerReported).abs();
-        if (diff.greaterThan(0.0001)) {
-          breaks.push({
-            securityId: secId,
-            symbol: bal.symbol,
-            calculatedQuantity: bal.quantity,
-            brokerReportedQuantity: brokerReported.toString(),
-            quantityDiscrepancy: calcQty.minus(brokerReported).toString(),
-            calculatedAcbCad: bal.totalAcbCad,
-            status: 'QUANTITY_BREAK',
-            explanation: `Calculated quantity (${bal.quantity}) differs from IBKR Open Position (${brokerReported})`,
-          });
-        }
-      }
-    });
-
-    return breaks;
+    return reconcilePositions(engineOutput.securityBalances, openPositions);
   }, [engineOutput.securityBalances, openPositions]);
 
   // Trigger IBKR Sync

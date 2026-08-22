@@ -125,22 +125,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
           <div className="space-y-3">
             <div>
-              <label className="block text-[#71717A] text-[11px] font-medium mb-1">Standard Base Inclusion Rate</label>
+              <label className="block text-[#71717A] text-[11px] font-medium mb-1">Standard Statutory Inclusion Rate</label>
               <select
                 value={settings.capitalGainsInclusionRate}
                 onChange={(e) => handleChange('capitalGainsInclusionRate', e.target.value)}
                 className="w-full bg-[#F9FAFB] border border-[#E4E4E7] rounded-xl px-3 py-2 text-[#18181B] font-mono focus:border-[#3B82F6] cursor-pointer"
               >
-                <option value="0.50">50.0% (Standard Historical Inclusion Rate)</option>
-                <option value="0.6667">66.67% (Tiered Post-June 25, 2024 Rule)</option>
+                <option value="0.50">50.0% (Standard Statutory Inclusion Rate)</option>
               </select>
             </div>
 
             <div className="p-3 bg-[#F9FAFB] rounded-xl border border-[#E4E4E7] space-y-1">
-              <div className="font-semibold text-[11px] text-[#18181B]">Dated Capital Gain Periods:</div>
+              <div className="font-semibold text-[11px] text-[#18181B]">Statutory Inclusion Rates:</div>
               <div className="text-[10px] text-[#71717A] space-y-0.5">
-                <div>• Period 1 (Prior to June 25, 2024): 50% inclusion on all net capital gains.</div>
-                <div>• Period 2 (Post June 25, 2024): 50% on first $250k CAD, 66.67% on excess for individuals.</div>
+                <div>• All Tax Years (2023 - 2026): 50.0% statutory inclusion rate under ITA s. 38(a).</div>
               </div>
             </div>
           </div>

@@ -1,5 +1,5 @@
-import { Transaction, Account, SecurityMaster } from '../types/tax';
-import { runAcbEngine } from './acbEngine';
+import { Transaction, Account, SecurityMaster, OpenPosition } from '../types/tax';
+import { runAcbEngine, reconcilePositions } from './acbEngine';
 
 export interface TestFixtureResult {
   id: string;
@@ -788,6 +788,36 @@ export function runAllTestFixtures(): TestFixtureResult[] {
       passed,
       expectedResult: 'Qty: 100, ACB: $4800',
       actualResult: `Qty: ${bal?.quantity || 0}, ACB: $${bal?.totalAcbCad || 0}`,
+      auditTrail: out.auditTrail,
+      executionTimeMs: performance.now() - start
+    });
+  }
+
+  // 18. Two Open Lots Reconcile as 125
+  {
+    const start = performance.now();
+    const txs: Transaction[] = [
+      { id: '1', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-01-01', transactionType: 'BUY', quantity: '100', price: '10', currency: 'CAD', commission: '0', totalGrossAmount: '1000', totalNetAmount: '1000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '1000', commissionCad: '0', totalOutlaysCad: '0', status: 'auto_approved', source: 'TEST_FIXTURE' },
+      { id: '2', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-02-01', transactionType: 'BUY', quantity: '25', price: '12', currency: 'CAD', commission: '0', totalGrossAmount: '300', totalNetAmount: '300', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '300', commissionCad: '0', totalOutlaysCad: '0', status: 'auto_approved', source: 'TEST_FIXTURE' },
+    ];
+    const out = runAcbEngine(txs, strictAccounts, strictSecurities);
+    const openPositions: OpenPosition[] = [
+      { accountId: 'TAXABLE1', symbol: 'ABC', quantity: '100', costBasisCad: '1000', reportDate: '2024-12-31' },
+      { accountId: 'TAXABLE1', symbol: 'ABC', quantity: '25', costBasisCad: '300', reportDate: '2024-12-31' },
+    ];
+    const breaks = reconcilePositions(out.securityBalances, openPositions);
+    const bal = out.securityBalances.get('SEC1');
+    const passed = Number(bal?.quantity) === 125 && breaks.length === 0;
+
+    results.push({
+      id: 'strict-6-open-positions-reconcile',
+      name: 'Open Position Lot Reconciliation',
+      category: 'Reconciliation',
+      description: 'Two open lots of 100 and 25 for same security must sum using Decimal and reconcile cleanly as 125 without breaks.',
+      statutoryCitations: ['Reconciliation Engine'],
+      passed,
+      expectedResult: 'Calculated Qty: 125, Reconciliation Breaks: 0',
+      actualResult: `Calculated Qty: ${bal?.quantity || 0}, Reconciliation Breaks: ${breaks.length}`,
       auditTrail: out.auditTrail,
       executionTimeMs: performance.now() - start
     });
