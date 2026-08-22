@@ -13,6 +13,7 @@ import { ManualEntryModal } from './components/ManualEntryModal';
 import { ImportModal } from './components/ImportModal';
 import { HelpView } from './components/HelpView';
 import { runAcbEngine } from './engine/acbEngine';
+import { d } from './engine/decimal';
 import { fetchIbkrFlexStatement, generateSandboxFlexXml } from './services/ibkrFlexService';
 import { parseIbkrFlexXml } from './parsers/ibkrFlexXmlParser';
 import {
@@ -177,18 +178,19 @@ export function App() {
       openPosMap.set(pos.symbol, (openPosMap.get(pos.symbol) || 0) + pos.position);
     });
 
-    engineOutput.securityBalances.forEach((bal) => {
-      if (bal.quantity > 0) {
+    engineOutput.securityBalances.forEach((bal, secId) => {
+      const calcQty = d(bal.quantity);
+      if (calcQty.isPositive()) {
         const brokerReported = openPosMap.get(bal.symbol) || 0;
-        const diff = Math.abs(bal.quantity - brokerReported);
-        if (diff > 0.0001) {
+        const diff = calcQty.minus(brokerReported).abs();
+        if (diff.greaterThan(0.0001)) {
           breaks.push({
-            securityId: bal.securityId,
+            securityId: secId,
             symbol: bal.symbol,
-            calculatedQuantity: bal.quantity.toString(),
+            calculatedQuantity: bal.quantity,
             brokerReportedQuantity: brokerReported.toString(),
-            quantityDiscrepancy: (bal.quantity - brokerReported).toString(),
-            calculatedAcbCad: bal.totalAcbCad.toString(),
+            quantityDiscrepancy: calcQty.minus(brokerReported).toString(),
+            calculatedAcbCad: bal.totalAcbCad,
             status: 'QUANTITY_BREAK',
             explanation: `Calculated quantity (${bal.quantity}) differs from IBKR Open Position (${brokerReported})`,
           });
@@ -422,6 +424,7 @@ export function App() {
           <ReviewQueueView
             transactions={transactions}
             securities={securities}
+            securityBalances={engineOutput.securityBalances}
             reconciliationBreaks={reconciliationBreaks}
             onConfirmTreatment={handleConfirmTreatment}
           />

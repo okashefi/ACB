@@ -89,6 +89,15 @@ export function generateSandboxFlexXml(): string {
       <OpenPositions>
       </OpenPositions>
 
+      <OptionExercises>
+      </OptionExercises>
+
+      <Transfers>
+      </Transfers>
+
+      <ConversionDetails>
+      </ConversionDetails>
+
     </FlexStatement>
   </FlexStatements>
 </FlexQueryResponse>`;

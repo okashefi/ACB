@@ -64,7 +64,7 @@ export function getBankOfCanadaRate(date: string, currency: string): number {
   }
 
   rateCache.set(cacheKey, candidateRate);
-  return toRate(candidateRate);
+  return candidateRate;
 }
 
 /**
@@ -72,7 +72,7 @@ export function getBankOfCanadaRate(date: string, currency: string): number {
  */
 export function registerFxRate(date: string, currency: string, rate: number): void {
   const cacheKey = `${date}_${currency.toUpperCase()}`;
-  rateCache.set(cacheKey, toRate(rate));
+  rateCache.set(cacheKey, rate);
 }
 
 /**
@@ -93,7 +93,7 @@ export function convertToCad(
   }
 
   if (explicitRate && explicitRate > 0) {
-    const rate = toRate(explicitRate);
+    const rate = explicitRate;
     const amountCad = d(amount).times(rate).toNumber();
     return {
       amountCad,

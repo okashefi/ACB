@@ -6,25 +6,25 @@ export interface CorporateActionCalculationResult {
   statutoryBasis: string;
   
   // Disposition of old shares
-  oldSharesDisposedQty: number;
-  oldSharesAcbRemovedCad: number;
-  proceedsCad: number;
-  realizedCapitalGainCad: number;
-  realizedCapitalLossCad: number;
+  oldSharesDisposedQty: string;
+  oldSharesAcbRemovedCad: string;
+  proceedsCad: string;
+  realizedCapitalGainCad: string;
+  realizedCapitalLossCad: string;
   
   // Acquisition of new shares
-  newSharesQty: number;
-  newSharesTotalAcbCad: number;
-  newSharesAcbPerUnitCad: number;
+  newSharesQty: string;
+  newSharesTotalAcbCad: string;
+  newSharesAcbPerUnitCad: string;
   
   // Remaining parent shares (e.g. for spin-offs or partial tenders)
-  parentSharesRemainingQty: number;
-  parentSharesRemainingAcbCad: number;
-  parentSharesAcbPerUnitCad: number;
+  parentSharesRemainingQty: string;
+  parentSharesRemainingAcbCad: string;
+  parentSharesAcbPerUnitCad: string;
   
   // Non-capital income / distributions
-  dividendIncomeCad: number;
-  returnOfCapitalCad: number;
+  dividendIncomeCad: string;
+  returnOfCapitalCad: string;
   
   explanation: string;
   reviewRequired: boolean;
@@ -159,8 +159,8 @@ export function classifyBrokerCorporateAction(
  */
 export function calculateCorporateAction(
   details: CorporateActionDetails,
-  oldSharesHeldQty: number,
-  oldSharesTotalAcbCad: number
+  oldSharesHeldQty: Decimal | number | string,
+  oldSharesTotalAcbCad: Decimal | number | string
 ): CorporateActionCalculationResult {
   const treatment = details.treatment;
   const oldAcb = d(oldSharesTotalAcbCad);
@@ -176,17 +176,17 @@ export function calculateCorporateAction(
       statutoryBasis: details.statutoryBasis || 'ITA s. 47(1) Split Continuity',
       oldSharesDisposedQty: toShares(oldQty),
       oldSharesAcbRemovedCad: toMoney(oldAcb),
-      proceedsCad: 0,
-      realizedCapitalGainCad: 0,
-      realizedCapitalLossCad: 0,
+      proceedsCad: toMoney(0),
+      realizedCapitalGainCad: toMoney(0),
+      realizedCapitalLossCad: toMoney(0),
       newSharesQty: toShares(newQty),
       newSharesTotalAcbCad: toMoney(oldAcb),
-      newSharesAcbPerUnitCad: toMoney(oldAcb.dividedBy(newQty)),
-      parentSharesRemainingQty: 0,
-      parentSharesRemainingAcbCad: 0,
-      parentSharesAcbPerUnitCad: 0,
-      dividendIncomeCad: 0,
-      returnOfCapitalCad: 0,
+      newSharesAcbPerUnitCad: newQty.isPositive() ? toMoney(oldAcb.dividedBy(newQty)) : toMoney(0),
+      parentSharesRemainingQty: toShares(0),
+      parentSharesRemainingAcbCad: toMoney(0),
+      parentSharesAcbPerUnitCad: toMoney(0),
+      dividendIncomeCad: toMoney(0),
+      returnOfCapitalCad: toMoney(0),
       explanation: `Split ratio ${details.ratio}:1 applied. Total ACB remains $${toMoney(oldAcb)} CAD across ${toShares(newQty)} units.`,
       reviewRequired: false,
     };
@@ -207,14 +207,14 @@ export function calculateCorporateAction(
       proceedsCad: toMoney(proceeds),
       realizedCapitalGainCad: toMoney(gain),
       realizedCapitalLossCad: toMoney(loss),
-      newSharesQty: 0,
-      newSharesTotalAcbCad: 0,
-      newSharesAcbPerUnitCad: 0,
-      parentSharesRemainingQty: 0,
-      parentSharesRemainingAcbCad: 0,
-      parentSharesAcbPerUnitCad: 0,
-      dividendIncomeCad: 0,
-      returnOfCapitalCad: 0,
+      newSharesQty: toShares(0),
+      newSharesTotalAcbCad: toMoney(0),
+      newSharesAcbPerUnitCad: toMoney(0),
+      parentSharesRemainingQty: toShares(0),
+      parentSharesRemainingAcbCad: toMoney(0),
+      parentSharesAcbPerUnitCad: toMoney(0),
+      dividendIncomeCad: toMoney(0),
+      returnOfCapitalCad: toMoney(0),
       explanation: `All-cash disposition of ${toShares(oldQty)} units at proceeds $${toMoney(proceeds)} CAD vs ACB $${toMoney(oldAcb)} CAD.`,
       reviewRequired: false,
     };
@@ -228,17 +228,17 @@ export function calculateCorporateAction(
       statutoryBasis: details.statutoryBasis || 'ITA s. 85.1 Rollover',
       oldSharesDisposedQty: toShares(oldQty),
       oldSharesAcbRemovedCad: toMoney(oldAcb),
-      proceedsCad: 0,
-      realizedCapitalGainCad: 0,
-      realizedCapitalLossCad: 0,
+      proceedsCad: toMoney(0),
+      realizedCapitalGainCad: toMoney(0),
+      realizedCapitalLossCad: toMoney(0),
       newSharesQty: toShares(newQty),
       newSharesTotalAcbCad: toMoney(oldAcb),
-      newSharesAcbPerUnitCad: toMoney(oldAcb.dividedBy(newQty)),
-      parentSharesRemainingQty: 0,
-      parentSharesRemainingAcbCad: 0,
-      parentSharesAcbPerUnitCad: 0,
-      dividendIncomeCad: 0,
-      returnOfCapitalCad: 0,
+      newSharesAcbPerUnitCad: newQty.isPositive() ? toMoney(oldAcb.dividedBy(newQty)) : toMoney(0),
+      parentSharesRemainingQty: toShares(0),
+      parentSharesRemainingAcbCad: toMoney(0),
+      parentSharesAcbPerUnitCad: toMoney(0),
+      dividendIncomeCad: toMoney(0),
+      returnOfCapitalCad: toMoney(0),
       explanation: `Rollover under ${details.statutoryBasis}. Target ACB of $${toMoney(oldAcb)} CAD carried over into ${toShares(newQty)} new shares with $0 gain/loss recognized.`,
       reviewRequired: false,
     };
@@ -265,11 +265,11 @@ export function calculateCorporateAction(
       newSharesQty: toShares(newQty),
       newSharesTotalAcbCad: toMoney(fmvNewTotal),
       newSharesAcbPerUnitCad: toMoney(fmvNewPerShare),
-      parentSharesRemainingQty: 0,
-      parentSharesRemainingAcbCad: 0,
-      parentSharesAcbPerUnitCad: 0,
-      dividendIncomeCad: 0,
-      returnOfCapitalCad: 0,
+      parentSharesRemainingQty: toShares(0),
+      parentSharesRemainingAcbCad: toMoney(0),
+      parentSharesAcbPerUnitCad: toMoney(0),
+      dividendIncomeCad: toMoney(0),
+      returnOfCapitalCad: toMoney(0),
       explanation: `Foreign share exchange taxable disposition. Target disposed at FMV $${toMoney(proceeds)} CAD; new shares acquired with opening ACB $${toMoney(fmvNewTotal)} CAD.`,
       reviewRequired: false,
     };
@@ -296,11 +296,11 @@ export function calculateCorporateAction(
       newSharesQty: toShares(newQty),
       newSharesTotalAcbCad: toMoney(fmvNewTotal),
       newSharesAcbPerUnitCad: toMoney(fmvNewPerShare),
-      parentSharesRemainingQty: 0,
-      parentSharesRemainingAcbCad: 0,
-      parentSharesAcbPerUnitCad: 0,
-      dividendIncomeCad: 0,
-      returnOfCapitalCad: 0,
+      parentSharesRemainingQty: toShares(0),
+      parentSharesRemainingAcbCad: toMoney(0),
+      parentSharesAcbPerUnitCad: toMoney(0),
+      dividendIncomeCad: toMoney(0),
+      returnOfCapitalCad: toMoney(0),
       explanation: `Taxable mixed deal: Consideration = Cash ($${toMoney(cashCad)}) + New Stock FMV ($${toMoney(fmvNewTotal)}) = $${toMoney(proceeds)} CAD. Recognized gain/loss = $${toMoney(gainOrLoss)} CAD. New shares opening ACB = $${toMoney(fmvNewTotal)} CAD.`,
       reviewRequired: false,
     };
@@ -325,15 +325,15 @@ export function calculateCorporateAction(
         oldSharesAcbRemovedCad: toMoney(oldAcb),
         proceedsCad: toMoney(cashCad),
         realizedCapitalGainCad: toMoney(recognizedGain),
-        realizedCapitalLossCad: 0,
+        realizedCapitalLossCad: toMoney(0),
         newSharesQty: toShares(newQty),
         newSharesTotalAcbCad: toMoney(newAcb),
-        newSharesAcbPerUnitCad: toMoney(newAcb.dividedBy(newQty)),
-        parentSharesRemainingQty: 0,
-        parentSharesRemainingAcbCad: 0,
-        parentSharesAcbPerUnitCad: 0,
-        dividendIncomeCad: 0,
-        returnOfCapitalCad: 0,
+        newSharesAcbPerUnitCad: newQty.isPositive() ? toMoney(newAcb.dividedBy(newQty)) : toMoney(0),
+        parentSharesRemainingQty: toShares(0),
+        parentSharesRemainingAcbCad: toMoney(0),
+        parentSharesAcbPerUnitCad: toMoney(0),
+        dividendIncomeCad: toMoney(0),
+        returnOfCapitalCad: toMoney(0),
         explanation: `Canadian rollover with boot: Inherent gain $${toMoney(inherentGainOrLoss)} CAD. Recognized gain = min(inherent gain, cash) = $${toMoney(recognizedGain)} CAD. New shares ACB = $${toMoney(newAcb)} CAD.`,
         reviewRequired: false,
       };
@@ -346,16 +346,16 @@ export function calculateCorporateAction(
         oldSharesDisposedQty: toShares(oldQty),
         oldSharesAcbRemovedCad: toMoney(oldAcb),
         proceedsCad: toMoney(cashCad),
-        realizedCapitalGainCad: 0,
-        realizedCapitalLossCad: 0, // No loss recognized on rollover
+        realizedCapitalGainCad: toMoney(0),
+        realizedCapitalLossCad: toMoney(0), // No loss recognized on rollover
         newSharesQty: toShares(newQty),
         newSharesTotalAcbCad: toMoney(newAcb),
-        newSharesAcbPerUnitCad: toMoney(newAcb.dividedBy(newQty)),
-        parentSharesRemainingQty: 0,
-        parentSharesRemainingAcbCad: 0,
-        parentSharesAcbPerUnitCad: 0,
-        dividendIncomeCad: 0,
-        returnOfCapitalCad: 0,
+        newSharesAcbPerUnitCad: newQty.isPositive() ? toMoney(newAcb.dividedBy(newQty)) : toMoney(0),
+        parentSharesRemainingQty: toShares(0),
+        parentSharesRemainingAcbCad: toMoney(0),
+        parentSharesAcbPerUnitCad: toMoney(0),
+        dividendIncomeCad: toMoney(0),
+        returnOfCapitalCad: toMoney(0),
         explanation: `Canadian rollover with boot (inherent loss): No loss recognized under s. 85.1. New shares ACB = Old ACB ($${toMoney(oldAcb)}) - Cash ($${toMoney(cashCad)}) = $${toMoney(newAcb)} CAD.`,
         reviewRequired: false,
       };
@@ -374,17 +374,17 @@ export function calculateCorporateAction(
       statutoryBasis: 'ITA s. 84(2) Takeover Deemed Dividend + s. 85.1 Rollover',
       oldSharesDisposedQty: toShares(oldQty),
       oldSharesAcbRemovedCad: toMoney(oldAcb),
-      proceedsCad: 0,
-      realizedCapitalGainCad: 0,
-      realizedCapitalLossCad: 0,
+      proceedsCad: toMoney(0),
+      realizedCapitalGainCad: toMoney(0),
+      realizedCapitalLossCad: toMoney(0),
       newSharesQty: toShares(newQty),
       newSharesTotalAcbCad: toMoney(newAcb),
-      newSharesAcbPerUnitCad: toMoney(newAcb.dividedBy(newQty)),
-      parentSharesRemainingQty: 0,
-      parentSharesRemainingAcbCad: 0,
-      parentSharesAcbPerUnitCad: 0,
+      newSharesAcbPerUnitCad: newQty.isPositive() ? toMoney(newAcb.dividedBy(newQty)) : toMoney(0),
+      parentSharesRemainingQty: toShares(0),
+      parentSharesRemainingAcbCad: toMoney(0),
+      parentSharesAcbPerUnitCad: toMoney(0),
       dividendIncomeCad: toMoney(dividendAmount),
-      returnOfCapitalCad: 0,
+      returnOfCapitalCad: toMoney(0),
       explanation: `Cash leg treated as takeover dividend ($${toMoney(dividendAmount)} CAD). Share exchange on rollover: New shares ACB = $${toMoney(newAcb)} CAD. Dividend does not reduce share ACB.`,
       reviewRequired: false,
     };
@@ -407,16 +407,16 @@ export function calculateCorporateAction(
       statutoryBasis: 'ITA s. 53(2)(a) Return of Capital Distribution',
       oldSharesDisposedQty: toShares(oldQty),
       oldSharesAcbRemovedCad: toMoney(oldAcb),
-      proceedsCad: 0,
+      proceedsCad: toMoney(0),
       realizedCapitalGainCad: toMoney(rocCapitalGain),
-      realizedCapitalLossCad: 0,
+      realizedCapitalLossCad: toMoney(0),
       newSharesQty: toShares(newQty),
       newSharesTotalAcbCad: toMoney(newAcb),
-      newSharesAcbPerUnitCad: newQty.isPositive() ? toMoney(newAcb.dividedBy(newQty)) : 0,
-      parentSharesRemainingQty: 0,
-      parentSharesRemainingAcbCad: 0,
-      parentSharesAcbPerUnitCad: 0,
-      dividendIncomeCad: 0,
+      newSharesAcbPerUnitCad: newQty.isPositive() ? toMoney(newAcb.dividedBy(newQty)) : toMoney(0),
+      parentSharesRemainingQty: toShares(0),
+      parentSharesRemainingAcbCad: toMoney(0),
+      parentSharesAcbPerUnitCad: toMoney(0),
+      dividendIncomeCad: toMoney(0),
       returnOfCapitalCad: toMoney(rocAmount),
       explanation: `Cash leg treated as Return of Capital ($${toMoney(rocAmount)} CAD). ACB reduced to $${toMoney(newAcb)} CAD. Excess over zero ($${toMoney(rocCapitalGain)} CAD) recognized as capital gain under s. 40(3).`,
       reviewRequired: false,
@@ -437,19 +437,19 @@ export function calculateCorporateAction(
     return {
       treatment,
       statutoryBasis: 'ITA s. 86.1 Eligible Foreign Spin-Off Election',
-      oldSharesDisposedQty: 0,
-      oldSharesAcbRemovedCad: 0,
-      proceedsCad: 0,
-      realizedCapitalGainCad: 0,
-      realizedCapitalLossCad: 0,
+      oldSharesDisposedQty: toShares(0),
+      oldSharesAcbRemovedCad: toMoney(0),
+      proceedsCad: toMoney(0),
+      realizedCapitalGainCad: toMoney(0),
+      realizedCapitalLossCad: toMoney(0),
       newSharesQty: toShares(spincoQty),
       newSharesTotalAcbCad: toMoney(spincoAllocatedAcb),
-      newSharesAcbPerUnitCad: toMoney(spincoAllocatedAcb.dividedBy(spincoQty)),
+      newSharesAcbPerUnitCad: spincoQty.isPositive() ? toMoney(spincoAllocatedAcb.dividedBy(spincoQty)) : toMoney(0),
       parentSharesRemainingQty: toShares(parentRemainingQty),
       parentSharesRemainingAcbCad: toMoney(parentAllocatedAcb),
-      parentSharesAcbPerUnitCad: toMoney(parentAllocatedAcb.dividedBy(parentRemainingQty)),
-      dividendIncomeCad: 0,
-      returnOfCapitalCad: 0,
+      parentSharesAcbPerUnitCad: parentRemainingQty.isPositive() ? toMoney(parentAllocatedAcb.dividedBy(parentRemainingQty)) : toMoney(0),
+      dividendIncomeCad: toMoney(0),
+      returnOfCapitalCad: toMoney(0),
       explanation: `Section 86.1 Election: Parent ACB $${toMoney(oldAcb)} CAD allocated pro-rata to FMV between Parent ($${toMoney(parentAllocatedAcb)} CAD) and SpinCo ($${toMoney(spincoAllocatedAcb)} CAD). $0 income inclusion.`,
       reviewRequired: false,
     };
@@ -464,19 +464,19 @@ export function calculateCorporateAction(
     return {
       treatment,
       statutoryBasis: 'ITA s. 90 Foreign Dividend in Kind',
-      oldSharesDisposedQty: 0,
-      oldSharesAcbRemovedCad: 0,
-      proceedsCad: 0,
-      realizedCapitalGainCad: 0,
-      realizedCapitalLossCad: 0,
+      oldSharesDisposedQty: toShares(0),
+      oldSharesAcbRemovedCad: toMoney(0),
+      proceedsCad: toMoney(0),
+      realizedCapitalGainCad: toMoney(0),
+      realizedCapitalLossCad: toMoney(0),
       newSharesQty: toShares(spincoQty),
       newSharesTotalAcbCad: toMoney(spincoFmvTotal),
       newSharesAcbPerUnitCad: toMoney(spincoFmvPerShare),
       parentSharesRemainingQty: toShares(oldQty),
       parentSharesRemainingAcbCad: toMoney(oldAcb),
-      parentSharesAcbPerUnitCad: toMoney(oldAcb.dividedBy(oldQty)),
+      parentSharesAcbPerUnitCad: oldQty.isPositive() ? toMoney(oldAcb.dividedBy(oldQty)) : toMoney(0),
       dividendIncomeCad: toMoney(spincoFmvTotal),
-      returnOfCapitalCad: 0,
+      returnOfCapitalCad: toMoney(0),
       explanation: `Ineligible Foreign Spin-off: Taxable foreign dividend of $${toMoney(spincoFmvTotal)} CAD. SpinCo opening ACB = $${toMoney(spincoFmvTotal)} CAD. Parent ACB remains $${toMoney(oldAcb)} CAD.`,
       reviewRequired: false,
     };
@@ -489,17 +489,17 @@ export function calculateCorporateAction(
       statutoryBasis: 'ITA s. 50(1) Deemed Disposition of Worthless Property',
       oldSharesDisposedQty: toShares(oldQty),
       oldSharesAcbRemovedCad: toMoney(oldAcb),
-      proceedsCad: 0,
-      realizedCapitalGainCad: 0,
+      proceedsCad: toMoney(0),
+      realizedCapitalGainCad: toMoney(0),
       realizedCapitalLossCad: toMoney(oldAcb),
-      newSharesQty: 0,
-      newSharesTotalAcbCad: 0,
-      newSharesAcbPerUnitCad: 0,
-      parentSharesRemainingQty: 0,
-      parentSharesRemainingAcbCad: 0,
-      parentSharesAcbPerUnitCad: 0,
-      dividendIncomeCad: 0,
-      returnOfCapitalCad: 0,
+      newSharesQty: toShares(0),
+      newSharesTotalAcbCad: toMoney(0),
+      newSharesAcbPerUnitCad: toMoney(0),
+      parentSharesRemainingQty: toShares(0),
+      parentSharesRemainingAcbCad: toMoney(0),
+      parentSharesAcbPerUnitCad: toMoney(0),
+      dividendIncomeCad: toMoney(0),
+      returnOfCapitalCad: toMoney(0),
       explanation: `Section 50(1) Election: Deemed disposition of ${toShares(oldQty)} worthless shares at $0 proceeds. Capital loss of $${toMoney(oldAcb)} CAD recognized.`,
       reviewRequired: false,
     };
@@ -509,19 +509,19 @@ export function calculateCorporateAction(
   return {
     treatment: 'CUSTOM_OVERRIDE',
     statutoryBasis: 'ITA s. 40',
-    oldSharesDisposedQty: 0,
-    oldSharesAcbRemovedCad: 0,
-    proceedsCad: 0,
-    realizedCapitalGainCad: 0,
-    realizedCapitalLossCad: 0,
-    newSharesQty: 0,
-    newSharesTotalAcbCad: 0,
-    newSharesAcbPerUnitCad: 0,
+    oldSharesDisposedQty: toShares(0),
+    oldSharesAcbRemovedCad: toMoney(0),
+    proceedsCad: toMoney(0),
+    realizedCapitalGainCad: toMoney(0),
+    realizedCapitalLossCad: toMoney(0),
+    newSharesQty: toShares(0),
+    newSharesTotalAcbCad: toMoney(0),
+    newSharesAcbPerUnitCad: toMoney(0),
     parentSharesRemainingQty: toShares(oldQty),
     parentSharesRemainingAcbCad: toMoney(oldAcb),
-    parentSharesAcbPerUnitCad: toMoney(oldAcb.dividedBy(oldQty)),
-    dividendIncomeCad: 0,
-    returnOfCapitalCad: 0,
+    parentSharesAcbPerUnitCad: oldQty.isPositive() ? toMoney(oldAcb.dividedBy(oldQty)) : toMoney(0),
+    dividendIncomeCad: toMoney(0),
+    returnOfCapitalCad: toMoney(0),
     explanation: 'Unclassified corporate action. Manual review needed.',
     reviewRequired: true,
   };

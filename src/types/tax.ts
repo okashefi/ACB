@@ -178,6 +178,10 @@ export interface Transaction {
   linkedShareTransactionId?: string;
   ibkrCode?: string; // e.g. 'A' (assigned), 'Ex' (exercised), 'Ep' (expired), 'Ca' (cancelled)
   
+  // Exclude from tax
+  isExcludedFromTax?: boolean;
+  exclusionReason?: string;
+
   // Status and Provenance
   status: ReviewStatus;
   reviewNotes?: string;
@@ -193,9 +197,9 @@ export interface SuperficialLossEvent {
   securityId: string;
   symbol: string;
   dispositionDate: string;
-  rawCapitalLossCad: number; // Absolute amount of loss
-  deniedLossCad: number; // Amount deemed superficial
-  allowedLossCad: number; // Loss recognized on Schedule 3
+  rawCapitalLossCad: string; // Absolute amount of loss
+  deniedLossCad: string; // Amount deemed superficial
+  allowedLossCad: string; // Loss recognized on Schedule 3
   
   // Matching replacement
   replacementTransactionId?: string;
@@ -217,28 +221,28 @@ export interface RealizedGainLoss {
   symbol: string;
   securityName: string;
   assetClass: AssetClass;
-  quantityDisposed: number;
+  quantityDisposed: string;
   
   // Proceeds
-  grossProceedsCad: number;
-  dispositionOutlaysCad: number; // Selling commissions & fees
-  netProceedsCad: number;
+  grossProceedsCad: string;
+  dispositionOutlaysCad: string; // Selling commissions & fees
+  netProceedsCad: string;
   
   // Cost base
-  acbPerUnitPriorCad: number;
-  acbOfUnitsDisposedCad: number;
+  acbPerUnitPriorCad: string;
+  acbOfUnitsDisposedCad: string;
   
   // Raw Gain/Loss
-  rawGainLossCad: number;
+  rawGainLossCad: string;
   
   // Superficial loss adjustments
   isSuperficialLoss: boolean;
-  superficialLossDeniedCad: number;
+  superficialLossDeniedCad: string;
   replacementTargetSecurityId?: string;
   isPermanentlyDeniedInRegistered: boolean;
   
   // Final recognized capital gain or loss for Schedule 3
-  recognizedGainLossCad: number;
+  recognizedGainLossCad: string;
   
   // Underlying transactions & rule citations
   dispositionTransactionId: string;
@@ -256,21 +260,21 @@ export interface AcbLedgerEntry {
   description: string;
   
   // Quantity delta
-  quantityChange: number;
-  runningQuantity: number;
+  quantityChange: string;
+  runningQuantity: string;
   
   // Cost delta
-  costChangeCad: number; // Positive for adds, negative for dispositions
-  runningTotalAcbCad: number;
-  runningAcbPerUnitCad: number;
+  costChangeCad: string; // Positive for adds, negative for dispositions
+  runningTotalAcbCad: string;
+  runningAcbPerUnitCad: string;
   
   // Gain/Loss if disposition
-  realizedGainLossCad?: number;
-  superficialLossAdjustmentCad?: number;
+  realizedGainLossCad?: string;
+  superficialLossAdjustmentCad?: string;
   
   // FX details
   originalCurrency: Currency;
-  fxRateUsed: number;
+  fxRateUsed: string;
   fxRateSource: string;
   
   statutoryRule: string; // e.g. "ITA s. 47(1) Average Cost Pool"
@@ -282,27 +286,27 @@ export interface SecurityRollforward {
   symbol: string;
   name: string;
   taxYear: number;
-  openingQuantity: number;
-  openingAcbCad: number;
-  openingAcbPerUnitCad: number;
+  openingQuantity: string;
+  openingAcbCad: string;
+  openingAcbPerUnitCad: string;
   
-  acquisitionsQuantity: number;
-  acquisitionsCostCad: number;
+  acquisitionsQuantity: string;
+  acquisitionsCostCad: string;
   
-  dispositionsQuantity: number;
-  dispositionsAcbRemovedCad: number;
+  dispositionsQuantity: string;
+  dispositionsAcbRemovedCad: string;
   
-  rocAdjustmentsCad: number; // Return of capital reductions
-  superficialLossAdditionsCad: number; // Denied losses added back to ACB
-  corporateActionAdjustmentsCad: number;
+  rocAdjustmentsCad: string; // Return of capital reductions
+  superficialLossAdditionsCad: string; // Denied losses added back to ACB
+  corporateActionAdjustmentsCad: string;
   
-  closingQuantity: number;
-  closingTotalAcbCad: number;
-  closingAcbPerUnitCad: number;
+  closingQuantity: string;
+  closingTotalAcbCad: string;
+  closingAcbPerUnitCad: string;
   
-  realizedGainLossTotalCad: number;
-  unrealizedGainLossCad?: number;
-  currentMarketPriceCad?: number;
+  realizedGainLossTotalCad: string;
+  unrealizedGainLossCad?: string;
+  currentMarketPriceCad?: string;
 }
 
 export interface OpenPosition {
@@ -349,7 +353,7 @@ export interface CalculationEngineOutput {
   realizedGainsLosses: RealizedGainLoss[];
   superficialLosses: SuperficialLossEvent[];
   rollforwardsByYear: Map<number, Map<string, SecurityRollforward>>;
-  securityBalances: Map<string, { quantity: string; totalAcbCad: number; acbPerUnitCad: number; symbol: string; name: string }>;
+  securityBalances: Map<string, { quantity: string; totalAcbCad: string; acbPerUnitCad: string; symbol: string; name: string }>;
   incomeDistributions: {
     dividendsCad: string;
     rocCad: string;

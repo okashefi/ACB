@@ -22,6 +22,7 @@ interface ReviewQueueViewProps {
   reconciliationBreaks?: ReconciliationBreak[];
   transactions: Transaction[];
   securities: SecurityMaster[];
+  securityBalances?: Map<string, { quantity: string; totalAcbCad: string; acbPerUnitCad: string; symbol: string; name: string }>;
   onConfirmTreatment: (
     txId: string,
     treatment: CorporateActionTreatment,
@@ -37,6 +38,7 @@ interface ReviewQueueViewProps {
 export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
   transactions,
   securities,
+  securityBalances,
   onConfirmTreatment,
   reconciliationBreaks = [],
 }) => {
@@ -56,9 +58,10 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
 
   const activeTx = transactions.find((t) => t.id === selectedTxId) || pendingTx[0];
 
-  // Derive target old shares and baseline estimate for preview calculation
-  const oldSharesHeld = activeTx ? parseFloat(activeTx.quantity) || 100 : 100;
-  const oldAcbEstimate = activeTx ? parseFloat(activeTx.amountCad) || 2500 : 2500;
+  // Derive target old shares and actual taxable pool ACB from securityBalances
+  const targetBal = activeTx ? (securityBalances?.get(activeTx.securityId) || Array.from(securityBalances?.values() || []).find((b: { symbol: string }) => b.symbol === activeTx.symbol)) : undefined;
+  const oldSharesHeld = targetBal ? targetBal.quantity : (activeTx?.quantity || '0');
+  const oldAcbEstimate = targetBal ? targetBal.totalAcbCad : (activeTx?.amountCad || '0.00');
 
   // Determine treatment key from the matrix of (Cash Character x Statutory Election)
   const getDerivedTreatment = (character: 'BOOT' | 'DIVIDEND' | 'ROC', election: 'S85_1' | 'S86' | 'S87' | 'TAXABLE_FOREIGN'): CorporateActionTreatment => {
@@ -476,7 +479,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
                   Step 3: Side-by-Side Dollar Outcomes Before Confirmation
                 </span>
                 <span className="text-[10px] text-[#71717A] font-mono">
-                  Target: {oldSharesHeld} shares @ ~${oldAcbEstimate} CAD ACB
+                  Target: {formatShares(oldSharesHeld)} shares @ {formatCad(oldAcbEstimate)} Total Pool ACB
                 </span>
               </div>
 

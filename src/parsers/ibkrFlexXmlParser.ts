@@ -64,8 +64,18 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
   };
 
   for (const stmt of flexStatements) {
+    if (stmt.AccountInformation !== undefined || stmt.AccountInfo !== undefined) hasAccountInformationSection = true;
+    if (stmt.SecuritiesInfo !== undefined || stmt.FinancialInstrumentInformation !== undefined) hasFinancialInstrumentInformationSection = true;
+    if (stmt.Trades !== undefined) hasTradesSection = true;
+    if (stmt.CorporateActions !== undefined) hasCorporateActionsSection = true;
+    if (stmt.CashTransactions !== undefined) hasCashTransactionsSection = true;
+    if (stmt.OpenPositions !== undefined) hasOpenPositionsSection = true;
+    if (stmt.OptionExercises !== undefined || stmt.OptionEAE !== undefined || stmt.OptionExercisesAndAssignments !== undefined) hasOptionExercisesSection = true;
+    if (stmt.Transfers !== undefined) hasTransfersSection = true;
+    if (stmt.ConversionDetails !== undefined || stmt.FxTransactions !== undefined || stmt.CurrencyConversions !== undefined) hasConversionDetailsSection = true;
+
     // 1. Account Information
-    const acctInfoList = toArray(stmt.AccountInformation || stmt.AccountInfo);
+    const acctInfoList = toArray(stmt.AccountInformation?.AccountInfo || stmt.AccountInformation || stmt.AccountInfo);
     if (acctInfoList.length > 0) hasAccountInformationSection = true;
     for (const info of acctInfoList) {
       const acctId = info.accountId || info.account || 'U_DEFAULT';
@@ -353,6 +363,105 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
         markPrice: String(markPrice),
         positionValueCad: String(posValCad),
         asOfDate: stmt.toDate || stmt.reportDate || '2026-08-22',
+      });
+    }
+
+    // 7. Option Exercises and Assignments
+    const optList = toArray(
+      stmt.OptionExercises?.OptionExercise ||
+      stmt.OptionEAE?.OptionEAE ||
+      stmt.OptionExercisesAndAssignments?.OptionExerciseAndAssignment
+    );
+    for (const opt of optList) {
+      const optId = opt.transactionID || opt.tradeID || opt.actionID || `${opt.reportDate || opt.tradeDate}_${opt.symbol}_${opt.quantity}`;
+      const symbol = opt.symbol || '';
+      const conid = opt.conid || opt.conId || '';
+      const secId = conid ? `CON_${conid}` : `SYM_${symbol}`;
+      const rawDate = opt.tradeDate || opt.reportDate || opt.dateTime?.substring(0, 10) || '';
+      const date = rawDate.replace(/\//g, '-');
+      const qty = Math.abs(parseFloat(opt.quantity || '0'));
+      const strike = parseFloat(opt.tradePrice || opt.strikePrice || opt.strike || '0');
+      const currency = opt.currency || 'USD';
+      const comm = Math.abs(parseFloat(opt.ibCommission || opt.commission || '0'));
+      const grossAmount = qty * strike;
+      const explicitFx = opt.fxRateToBase ? parseFloat(opt.fxRateToBase) : undefined;
+      const { amountCad, fxRate, fxSource } = convertToCad(grossAmount, currency, date, explicitFx);
+      const { amountCad: commCad } = convertToCad(comm, currency, date, explicitFx);
+
+      const type = (opt.type || opt.transactionType || opt.action || opt.putCall || '').toUpperCase();
+      const code = opt.code || opt.notes || '';
+      let txType: Transaction['transactionType'] = 'EXERCISE_LONG_CALL';
+      if (type.includes('ASSIGN') || code.includes('A')) {
+        txType = (type.includes('PUT') || symbol.includes('P')) ? 'ASSIGNED_SHORT_PUT' : 'ASSIGNED_SHORT_CALL';
+      } else {
+        txType = (type.includes('PUT') || symbol.includes('P')) ? 'EXERCISE_LONG_PUT' : 'EXERCISE_LONG_CALL';
+      }
+
+      transactions.push({
+        id: `IBKR_OPT_${optId}`,
+        accountId: opt.accountId || 'U_DEFAULT',
+        securityId: secId,
+        symbol,
+        date,
+        transactionType: txType,
+        quantity: String(qty),
+        price: String(strike),
+        currency,
+        commission: String(comm),
+        totalGrossAmount: String(grossAmount),
+        totalNetAmount: String(grossAmount + comm),
+        fxRate: String(fxRate),
+        fxRateSource: fxSource,
+        amountCad: String(amountCad),
+        commissionCad: String(commCad),
+        totalOutlaysCad: String(commCad),
+        ibkrCode: code || type,
+        ibkrTransactionId: optId,
+        status: 'auto_approved',
+        source: 'IBKR_FLEX_API',
+      });
+    }
+
+    // 8. Transfers (In / Out)
+    const xferList = toArray(stmt.Transfers?.Transfer);
+    for (const xfer of xferList) {
+      const xferId = xfer.transactionID || xfer.transferID || `${xfer.reportDate || xfer.date}_${xfer.symbol}_${xfer.quantity}`;
+      const symbol = xfer.symbol || '';
+      const conid = xfer.conid || xfer.conId || '';
+      const secId = conid ? `CON_${conid}` : `SYM_${symbol}`;
+      const rawDate = xfer.date || xfer.reportDate || xfer.dateTime?.substring(0, 10) || '';
+      const date = rawDate.replace(/\//g, '-');
+      const qty = Math.abs(parseFloat(xfer.quantity || '0'));
+      const grossAmount = Math.abs(parseFloat(xfer.costBasis || xfer.positionAmount || xfer.amount || '0'));
+      const price = qty > 0 && grossAmount > 0 ? grossAmount / qty : 0;
+      const currency = xfer.currency || 'USD';
+      const explicitFx = xfer.fxRateToBase ? parseFloat(xfer.fxRateToBase) : undefined;
+      const { amountCad, fxRate, fxSource } = convertToCad(grossAmount, currency, date, explicitFx);
+
+      const dir = (xfer.direction || xfer.type || '').toUpperCase();
+      const txType: Transaction['transactionType'] = dir.includes('OUT') ? 'TRANSFER_OUT' : 'TRANSFER_IN';
+
+      transactions.push({
+        id: `IBKR_XFER_${xferId}`,
+        accountId: xfer.accountId || 'U_DEFAULT',
+        securityId: secId,
+        symbol,
+        date,
+        transactionType: txType,
+        quantity: String(qty),
+        price: String(price),
+        currency,
+        commission: '0',
+        totalGrossAmount: String(grossAmount),
+        totalNetAmount: String(grossAmount),
+        fxRate: String(fxRate),
+        fxRateSource: fxSource,
+        amountCad: String(amountCad),
+        commissionCad: '0',
+        totalOutlaysCad: '0',
+        ibkrTransactionId: xferId,
+        status: 'auto_approved',
+        source: 'IBKR_FLEX_API',
       });
     }
   }

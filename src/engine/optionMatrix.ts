@@ -5,29 +5,29 @@ export interface OptionPositionState {
   seriesKey: string;
   underlyingSymbol: string;
   putOrCall: 'PUT' | 'CALL';
-  strike: number;
+  strike: string | number;
   expiryDate: string;
   multiplier: number;
   
   // Long contracts pool
-  longContracts: number;
-  totalLongAcbCad: number;
-  longAcbPerContractCad: number;
+  longContracts: string;
+  totalLongAcbCad: string;
+  longAcbPerContractCad: string;
   
   // Short contracts pool
-  shortContracts: number;
-  totalUnearnedPremiumCad: number;
-  unearnedPremiumPerContractCad: number;
+  shortContracts: string;
+  totalUnearnedPremiumCad: string;
+  unearnedPremiumPerContractCad: string;
 }
 
 export interface OptionTaxEffect {
   isShareTransaction: boolean;
-  shareDeltaQty: number;
-  shareCostCad: number; // Added to share ACB
-  shareProceedsCad: number; // Proceeds of disposition for shares
+  shareDeltaQty: string;
+  shareCostCad: string; // Added to share ACB
+  shareProceedsCad: string; // Proceeds of disposition for shares
   
   isOptionDisposition: boolean;
-  optionGainLossCad: number;
+  optionGainLossCad: string;
   optionExplanation: string;
   statutoryBasis: string;
 }
@@ -51,8 +51,8 @@ export function getOptionSeriesKey(
 export function evaluateOptionTaxEffect(
   tx: Transaction,
   optionState: OptionPositionState,
-  underlyingCurrentSharesHeld: number = 0,
-  underlyingCurrentAcbCad: number = 0
+  underlyingCurrentSharesHeld: Decimal | number | string = 0,
+  underlyingCurrentAcbCad: Decimal | number | string = 0
 ): { effect: OptionTaxEffect; updatedState: OptionPositionState } {
   const multiplier = optionState.multiplier || 100;
   const contracts = d(tx.quantity);
@@ -71,16 +71,16 @@ export function evaluateOptionTaxEffect(
 
       updated.longContracts = toShares(newLongQty);
       updated.totalLongAcbCad = toMoney(newLongAcb);
-      updated.longAcbPerContractCad = newLongQty.isPositive() ? toMoney(newLongAcb.dividedBy(newLongQty)) : 0;
+      updated.longAcbPerContractCad = newLongQty.isPositive() ? toMoney(newLongAcb.dividedBy(newLongQty)) : '0.00';
 
       return {
         effect: {
           isShareTransaction: false,
-          shareDeltaQty: 0,
-          shareCostCad: 0,
-          shareProceedsCad: 0,
+          shareDeltaQty: '0',
+          shareCostCad: '0.00',
+          shareProceedsCad: '0.00',
           isOptionDisposition: false,
-          optionGainLossCad: 0,
+          optionGainLossCad: '0.00',
           optionExplanation: `Bought ${tx.quantity} long option contracts. Added $${toMoney(addedAcb)} CAD to option ACB pool.`,
           statutoryBasis: 'ITA s. 47(1) Option ACB Pool',
         },
@@ -100,14 +100,14 @@ export function evaluateOptionTaxEffect(
 
       updated.longContracts = toShares(remainingQty);
       updated.totalLongAcbCad = toMoney(remainingAcb);
-      updated.longAcbPerContractCad = remainingQty.isPositive() ? toMoney(remainingAcb.dividedBy(remainingQty)) : 0;
+      updated.longAcbPerContractCad = remainingQty.isPositive() ? toMoney(remainingAcb.dividedBy(remainingQty)) : '0.00';
 
       return {
         effect: {
           isShareTransaction: false,
-          shareDeltaQty: 0,
-          shareCostCad: 0,
-          shareProceedsCad: 0,
+          shareDeltaQty: '0',
+          shareCostCad: '0.00',
+          shareProceedsCad: '0.00',
           isOptionDisposition: true,
           optionGainLossCad: toMoney(gainOrLoss),
           optionExplanation: `Sold to close ${tx.quantity} long option contracts. Proceeds $${toMoney(netProceeds)} CAD vs ACB $${toMoney(acbRemoved)} CAD. Realized gain/loss: $${toMoney(gainOrLoss)} CAD.`,
@@ -125,16 +125,16 @@ export function evaluateOptionTaxEffect(
 
       updated.shortContracts = toShares(newShortQty);
       updated.totalUnearnedPremiumCad = toMoney(newUnearned);
-      updated.unearnedPremiumPerContractCad = newShortQty.isPositive() ? toMoney(newUnearned.dividedBy(newShortQty)) : 0;
+      updated.unearnedPremiumPerContractCad = newShortQty.isPositive() ? toMoney(newUnearned.dividedBy(newShortQty)) : '0.00';
 
       return {
         effect: {
           isShareTransaction: false,
-          shareDeltaQty: 0,
-          shareCostCad: 0,
-          shareProceedsCad: 0,
+          shareDeltaQty: '0',
+          shareCostCad: '0.00',
+          shareProceedsCad: '0.00',
           isOptionDisposition: false,
-          optionGainLossCad: 0,
+          optionGainLossCad: '0.00',
           optionExplanation: `Wrote ${tx.quantity} short contracts. Parked $${toMoney(netPremiumReceived)} CAD as unearned premium.`,
           statutoryBasis: 'ITA s. 49(1) Grant of Option (Unearned Premium)',
         },
@@ -154,14 +154,14 @@ export function evaluateOptionTaxEffect(
 
       updated.shortContracts = toShares(remainingShortQty);
       updated.totalUnearnedPremiumCad = toMoney(remainingUnearned);
-      updated.unearnedPremiumPerContractCad = remainingShortQty.isPositive() ? toMoney(remainingUnearned.dividedBy(remainingShortQty)) : 0;
+      updated.unearnedPremiumPerContractCad = remainingShortQty.isPositive() ? toMoney(remainingUnearned.dividedBy(remainingShortQty)) : '0.00';
 
       return {
         effect: {
           isShareTransaction: false,
-          shareDeltaQty: 0,
-          shareCostCad: 0,
-          shareProceedsCad: 0,
+          shareDeltaQty: '0',
+          shareCostCad: '0.00',
+          shareProceedsCad: '0.00',
           isOptionDisposition: true,
           optionGainLossCad: toMoney(gainOrLoss),
           optionExplanation: `Bought to close ${tx.quantity} short contracts. Unearned premium $${toMoney(unearnedClosed)} CAD vs closing cost $${toMoney(costToClose)} CAD. Realized gain/loss: $${toMoney(gainOrLoss)} CAD.`,
@@ -181,14 +181,14 @@ export function evaluateOptionTaxEffect(
 
       updated.longContracts = toShares(remainingQty);
       updated.totalLongAcbCad = toMoney(remainingAcb);
-      updated.longAcbPerContractCad = remainingQty.isPositive() ? toMoney(remainingAcb.dividedBy(remainingQty)) : 0;
+      updated.longAcbPerContractCad = remainingQty.isPositive() ? toMoney(remainingAcb.dividedBy(remainingQty)) : '0.00';
 
       return {
         effect: {
           isShareTransaction: false,
-          shareDeltaQty: 0,
-          shareCostCad: 0,
-          shareProceedsCad: 0,
+          shareDeltaQty: '0',
+          shareCostCad: '0.00',
+          shareProceedsCad: '0.00',
           isOptionDisposition: true,
           optionGainLossCad: toMoney(lossAmount.negated()),
           optionExplanation: `Long option expired worthless. Capital loss realized equal to option ACB: -$${toMoney(lossAmount)} CAD.`,
@@ -208,14 +208,14 @@ export function evaluateOptionTaxEffect(
 
       updated.shortContracts = toShares(remainingShortQty);
       updated.totalUnearnedPremiumCad = toMoney(remainingUnearned);
-      updated.unearnedPremiumPerContractCad = remainingShortQty.isPositive() ? toMoney(remainingUnearned.dividedBy(remainingShortQty)) : 0;
+      updated.unearnedPremiumPerContractCad = remainingShortQty.isPositive() ? toMoney(remainingUnearned.dividedBy(remainingShortQty)) : '0.00';
 
       return {
         effect: {
           isShareTransaction: false,
-          shareDeltaQty: 0,
-          shareCostCad: 0,
-          shareProceedsCad: 0,
+          shareDeltaQty: '0',
+          shareCostCad: '0.00',
+          shareProceedsCad: '0.00',
           isOptionDisposition: true,
           optionGainLossCad: toMoney(gainAmount),
           optionExplanation: `Short option expired unexercised. Capital gain realized equal to unearned premium: +$${toMoney(gainAmount)} CAD.`,
@@ -237,16 +237,16 @@ export function evaluateOptionTaxEffect(
 
       updated.longContracts = toShares(remainingQty);
       updated.totalLongAcbCad = toMoney(remainingAcb);
-      updated.longAcbPerContractCad = remainingQty.isPositive() ? toMoney(remainingAcb.dividedBy(remainingQty)) : 0;
+      updated.longAcbPerContractCad = remainingQty.isPositive() ? toMoney(remainingAcb.dividedBy(remainingQty)) : '0.00';
 
       return {
         effect: {
           isShareTransaction: true,
           shareDeltaQty: toShares(sharesAcquired),
           shareCostCad: toMoney(totalShareCost),
-          shareProceedsCad: 0,
+          shareProceedsCad: '0.00',
           isOptionDisposition: false, // Basis rolled into shares; no separate option gain
-          optionGainLossCad: 0,
+          optionGainLossCad: '0.00',
           optionExplanation: `Exercised Long Call: Acquired ${toShares(sharesAcquired)} shares. Share ACB = Strike ($${toMoney(strikeTotalCad)}) + Option Premium ($${toMoney(optionAcbTransferred)}) + Comm ($${toMoney(commCad)}) = $${toMoney(totalShareCost)} CAD.`,
           statutoryBasis: 'ITA s. 49(3) Long Call Exercise Basis Rollover',
         },
@@ -266,16 +266,16 @@ export function evaluateOptionTaxEffect(
 
       updated.shortContracts = toShares(remainingShortQty);
       updated.totalUnearnedPremiumCad = toMoney(remainingUnearned);
-      updated.unearnedPremiumPerContractCad = remainingShortQty.isPositive() ? toMoney(remainingUnearned.dividedBy(remainingShortQty)) : 0;
+      updated.unearnedPremiumPerContractCad = remainingShortQty.isPositive() ? toMoney(remainingUnearned.dividedBy(remainingShortQty)) : '0.00';
 
       return {
         effect: {
           isShareTransaction: true,
           shareDeltaQty: toShares(sharesDelivered.negated()),
-          shareCostCad: 0,
+          shareCostCad: '0.00',
           shareProceedsCad: toMoney(shareProceeds),
           isOptionDisposition: false, // Rolled into share proceeds
-          optionGainLossCad: 0,
+          optionGainLossCad: '0.00',
           optionExplanation: `Assigned on Short Call: Delivered ${toShares(sharesDelivered)} shares. Total share proceeds = Strike ($${toMoney(strikeTotalCad)}) + Option Premium Received ($${toMoney(unearnedPremiumTransferred)}) - Comm ($${toMoney(commCad)}) = $${toMoney(shareProceeds)} CAD.`,
           statutoryBasis: 'ITA s. 49(4) Short Call Assignment Share Disposition',
         },
@@ -295,16 +295,16 @@ export function evaluateOptionTaxEffect(
 
       updated.longContracts = toShares(remainingQty);
       updated.totalLongAcbCad = toMoney(remainingAcb);
-      updated.longAcbPerContractCad = remainingQty.isPositive() ? toMoney(remainingAcb.dividedBy(remainingQty)) : 0;
+      updated.longAcbPerContractCad = remainingQty.isPositive() ? toMoney(remainingAcb.dividedBy(remainingQty)) : '0.00';
 
       return {
         effect: {
           isShareTransaction: true,
           shareDeltaQty: toShares(sharesDelivered.negated()),
-          shareCostCad: 0,
+          shareCostCad: '0.00',
           shareProceedsCad: toMoney(shareProceeds),
           isOptionDisposition: false,
-          optionGainLossCad: 0,
+          optionGainLossCad: '0.00',
           optionExplanation: `Exercised Long Put: Delivered ${toShares(sharesDelivered)} shares. Total share proceeds = Strike ($${toMoney(strikeTotalCad)}) - Option Premium Paid ($${toMoney(optionAcbTransferred)}) - Comm ($${toMoney(commCad)}) = $${toMoney(shareProceeds)} CAD.`,
           statutoryBasis: 'ITA s. 49(3) Long Put Exercise Share Disposition',
         },
@@ -324,16 +324,16 @@ export function evaluateOptionTaxEffect(
 
       updated.shortContracts = toShares(remainingShortQty);
       updated.totalUnearnedPremiumCad = toMoney(remainingUnearned);
-      updated.unearnedPremiumPerContractCad = remainingShortQty.isPositive() ? toMoney(remainingUnearned.dividedBy(remainingShortQty)) : 0;
+      updated.unearnedPremiumPerContractCad = remainingShortQty.isPositive() ? toMoney(remainingUnearned.dividedBy(remainingShortQty)) : '0.00';
 
       return {
         effect: {
           isShareTransaction: true,
           shareDeltaQty: toShares(sharesAcquired),
           shareCostCad: toMoney(totalShareCost),
-          shareProceedsCad: 0,
+          shareProceedsCad: '0.00',
           isOptionDisposition: false,
-          optionGainLossCad: 0,
+          optionGainLossCad: '0.00',
           optionExplanation: `Assigned on Short Put: Put ${toShares(sharesAcquired)} shares. Share ACB = Strike ($${toMoney(strikeTotalCad)}) - Option Premium Received ($${toMoney(unearnedPremiumTransferred)}) + Comm ($${toMoney(commCad)}) = $${toMoney(totalShareCost)} CAD.`,
           statutoryBasis: 'ITA s. 49(4) Short Put Assignment Basis Reduction',
         },
@@ -345,11 +345,11 @@ export function evaluateOptionTaxEffect(
       return {
         effect: {
           isShareTransaction: false,
-          shareDeltaQty: 0,
-          shareCostCad: 0,
-          shareProceedsCad: 0,
+          shareDeltaQty: '0',
+          shareCostCad: '0.00',
+          shareProceedsCad: '0.00',
           isOptionDisposition: false,
-          optionGainLossCad: 0,
+          optionGainLossCad: '0.00',
           optionExplanation: 'Unrecognized option transaction type',
           statutoryBasis: 'ITA s. 40',
         },

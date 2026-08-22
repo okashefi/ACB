@@ -3,9 +3,9 @@ import { Transaction, Account, SuperficialLossEvent } from '../types/tax';
 
 export interface SuperficialLossCheckResult {
   isSuperficial: boolean;
-  rawLossCad: number;
-  deniedLossCad: number;
-  allowedLossCad: number;
+  rawLossCad: string;
+  deniedLossCad: string;
+  allowedLossCad: string;
   replacementTransactionId?: string;
   replacementAccountId?: string;
   replacementDate?: string;
@@ -39,27 +39,27 @@ export function isProvisionalWindow(dispositionDate: string, referenceDate: stri
  */
 export function evaluateSuperficialLoss(
   dispositionTx: Transaction,
-  dispositionLossCad: number, // Positive number representing the loss
-  disposedSharesQty: number,
+  dispositionLossCad: Decimal | number | string, // Positive number representing the loss
+  disposedSharesQty: Decimal | number | string,
   allTransactions: Transaction[],
   allAccounts: Map<string, Account>,
-  postWindowSharesHeld: number = 0,
+  postWindowSharesHeld: Decimal | number | string = 0,
   referenceDate: string = '2026-08-22'
 ): SuperficialLossCheckResult {
+  const lossCad = d(dispositionLossCad);
   // If not a loss, superficial loss does not apply
-  if (dispositionLossCad <= 0) {
+  if (lossCad.isNegative() || lossCad.isZero()) {
     return {
       isSuperficial: false,
-      rawLossCad: 0,
-      deniedLossCad: 0,
-      allowedLossCad: 0,
+      rawLossCad: toMoney(0),
+      deniedLossCad: toMoney(0),
+      allowedLossCad: toMoney(0),
       isPermanentlyDeniedInRegistered: false,
       status: 'final',
       explanation: 'No capital loss occurred.',
     };
   }
 
-  const lossCad = d(dispositionLossCad);
   const disposedQty = d(disposedSharesQty);
   const dispDate = dispositionTx.date;
   const securityId = dispositionTx.securityId;
@@ -96,7 +96,7 @@ export function evaluateSuperficialLoss(
   }
 
   // Also check if taxpayer still holds identical property at the end of the window
-  const hasRemainingPosition = postWindowSharesHeld > 0 || totalAcquiredInWindow.isPositive();
+  const hasRemainingPosition = d(postWindowSharesHeld).isPositive() || totalAcquiredInWindow.isPositive();
 
   if (totalAcquiredInWindow.isPositive() && hasRemainingPosition) {
     // Pro-rata denial formula under ITA s. 54:
@@ -132,7 +132,7 @@ export function evaluateSuperficialLoss(
   return {
     isSuperficial: false,
     rawLossCad: toMoney(lossCad),
-    deniedLossCad: 0,
+    deniedLossCad: toMoney(0),
     allowedLossCad: toMoney(lossCad),
     isPermanentlyDeniedInRegistered: false,
     status: 'final',

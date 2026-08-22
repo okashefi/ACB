@@ -1,4 +1,4 @@
-import { d, toMoney, toShares, Decimal } from './decimal';
+import { d, toMoney, toShares, toRate, Decimal } from './decimal';
 import {
   Transaction,
   Account,
@@ -7,29 +7,12 @@ import {
   RealizedGainLoss,
   SuperficialLossEvent,
   SecurityRollforward,
+  CalculationEngineOutput,
   TaxSettings,
 } from '../types/tax';
 import { calculateCorporateAction } from './corporateActions';
 import { evaluateOptionTaxEffect, OptionPositionState, getOptionSeriesKey } from './optionMatrix';
 import { evaluateSuperficialLoss } from './superficialLoss';
-
-export interface CalculationEngineOutput {
-  ledger: AcbLedgerEntry[];
-  realizedGainsLosses: RealizedGainLoss[];
-  superficialLosses: SuperficialLossEvent[];
-  rollforwardsByYear: Map<number, Map<string, SecurityRollforward>>;
-  securityBalances: Map<string, { quantity: number; totalAcbCad: number; acbPerUnitCad: number; symbol: string; name: string }>;
-  incomeDistributions: {
-    dividendsCad: number;
-    rocCad: number;
-    withholdingTaxCad: number;
-    optionPremiumsCad: number;
-  };
-  totalRealizedGainCad: number;
-  totalRealizedLossCad: number;
-  totalNetRealizedGainLossCad: number;
-  auditTrail: string[];
-}
 
 interface SecurityBookState {
   securityId: string;
@@ -145,32 +128,37 @@ export function runAcbEngine(
         symbol: sym,
         name: name || sym,
         taxYear: year,
-        openingQuantity: 0,
-        openingAcbCad: 0,
-        openingAcbPerUnitCad: 0,
-        acquisitionsQuantity: 0,
-        acquisitionsCostCad: 0,
-        dispositionsQuantity: 0,
-        dispositionsAcbRemovedCad: 0,
-        rocAdjustmentsCad: 0,
-        superficialLossAdditionsCad: 0,
-        corporateActionAdjustmentsCad: 0,
-        closingQuantity: 0,
-        closingTotalAcbCad: 0,
-        closingAcbPerUnitCad: 0,
-        realizedGainLossTotalCad: 0,
+        openingQuantity: '0',
+        openingAcbCad: '0.00',
+        openingAcbPerUnitCad: '0.00',
+        acquisitionsQuantity: '0',
+        acquisitionsCostCad: '0.00',
+        dispositionsQuantity: '0',
+        dispositionsAcbRemovedCad: '0.00',
+        rocAdjustmentsCad: '0.00',
+        superficialLossAdditionsCad: '0.00',
+        corporateActionAdjustmentsCad: '0.00',
+        closingQuantity: '0',
+        closingTotalAcbCad: '0.00',
+        closingAcbPerUnitCad: '0.00',
+        realizedGainLossTotalCad: '0.00',
       });
     }
     updater(yearMap.get(secId)!);
   };
 
-      // MAIN REPLAY LOOP
+  // MAIN REPLAY LOOP
   for (const tx of sortedTx) {
     const acct = accountMap.get(tx.accountId);
     const isTaxable = !acct || acct.accountType === 'taxable' || acct.accountType === 'spouse_taxable' || acct.accountType === 'affiliate_taxable';
     const txYear = parseInt(tx.date.substring(0, 4), 10);
     const sec = securityMap.get(tx.securityId);
     const secName = sec?.name || tx.symbol;
+
+    if (tx.isExcludedFromTax) {
+      auditTrail.push(`[${tx.date}] EXCLUDED FROM TAX: ${tx.symbol} ${tx.transactionType} (${tx.exclusionReason || 'User flagged'})`);
+      continue;
+    }
 
     if (tx.status === 'needs_review') {
       blockedSecurities.add(tx.securityId);
@@ -194,10 +182,6 @@ export function runAcbEngine(
 
     // Registered account operations don't alter non-registered taxable ACB pool
     if (!isTaxable) {
-      // Check in-kind transfer into registered (deemed disposition at FMV)
-      if (tx.transactionType === 'TRANSFER_IN' && tx.corporateAction?.brokerDescription?.includes('IN_KIND_FROM_TAXABLE')) {
-        // Handled via taxable book disposition
-      }
       continue;
     }
 
@@ -209,14 +193,24 @@ export function runAcbEngine(
     if (tx.corporateAction) {
       const caResult = calculateCorporateAction(
         tx.corporateAction,
-        book.quantity.toNumber(),
-        book.totalAcbCad.toNumber()
+        book.quantity,
+        book.totalAcbCad
       );
 
+      const oldSharesDisposed = d(caResult.oldSharesDisposedQty);
+      const oldAcbRemoved = d(caResult.oldSharesAcbRemovedCad);
+      const newSharesQty = d(caResult.newSharesQty);
+      const newSharesTotalAcb = d(caResult.newSharesTotalAcbCad);
+      const realizedGain = d(caResult.realizedCapitalGainCad);
+      const realizedLoss = d(caResult.realizedCapitalLossCad);
+      const proceeds = d(caResult.proceedsCad);
+      const divInc = d(caResult.dividendIncomeCad);
+      const rocInc = d(caResult.returnOfCapitalCad);
+
       // Apply old shares removal
-      if (caResult.oldSharesDisposedQty > 0) {
-        book.quantity = Decimal.max(0, book.quantity.minus(d(caResult.oldSharesDisposedQty)));
-        book.totalAcbCad = Decimal.max(0, book.totalAcbCad.minus(d(caResult.oldSharesAcbRemovedCad)));
+      if (oldSharesDisposed.isPositive()) {
+        book.quantity = Decimal.max(0, book.quantity.minus(oldSharesDisposed));
+        book.totalAcbCad = Decimal.max(0, book.totalAcbCad.minus(oldAcbRemoved));
         book.acbPerUnitCad = book.quantity.isPositive() ? book.totalAcbCad.dividedBy(book.quantity) : new Decimal(0);
       }
 
@@ -224,19 +218,17 @@ export function runAcbEngine(
       const targetSecId = tx.corporateAction.newSecurityId || tx.securityId;
       const targetBook = getBook(targetSecId, tx.symbol);
 
-      if (caResult.newSharesQty > 0) {
-        targetBook.quantity = targetBook.quantity.plus(d(caResult.newSharesQty));
-        targetBook.totalAcbCad = targetBook.totalAcbCad.plus(d(caResult.newSharesTotalAcbCad));
+      if (newSharesQty.isPositive()) {
+        targetBook.quantity = targetBook.quantity.plus(newSharesQty);
+        targetBook.totalAcbCad = targetBook.totalAcbCad.plus(newSharesTotalAcb);
         targetBook.acbPerUnitCad = targetBook.quantity.isPositive()
           ? targetBook.totalAcbCad.dividedBy(targetBook.quantity)
           : new Decimal(0);
       }
 
       // Record capital gains / losses if recognized
-      if (caResult.realizedCapitalGainCad > 0 || caResult.realizedCapitalLossCad > 0) {
-        const netGainLoss = caResult.realizedCapitalGainCad > 0
-          ? caResult.realizedCapitalGainCad
-          : -caResult.realizedCapitalLossCad;
+      if (realizedGain.isPositive() || realizedLoss.isPositive()) {
+        const netGainLoss = realizedGain.isPositive() ? realizedGain : realizedLoss.negated();
 
         realizedGainsLosses.push({
           id: `RGL_${tx.id}`,
@@ -246,17 +238,17 @@ export function runAcbEngine(
           symbol: tx.symbol,
           securityName: secName,
           assetClass: sec?.assetClass || 'STK',
-          quantityDisposed: caResult.oldSharesDisposedQty,
-          grossProceedsCad: caResult.proceedsCad,
-          dispositionOutlaysCad: 0,
-          netProceedsCad: caResult.proceedsCad,
-          acbPerUnitPriorCad: book.acbPerUnitCad.toNumber(),
-          acbOfUnitsDisposedCad: caResult.oldSharesAcbRemovedCad,
-          rawGainLossCad: netGainLoss,
+          quantityDisposed: toShares(oldSharesDisposed),
+          grossProceedsCad: toMoney(proceeds),
+          dispositionOutlaysCad: toMoney(0),
+          netProceedsCad: toMoney(proceeds),
+          acbPerUnitPriorCad: toMoney(book.acbPerUnitCad),
+          acbOfUnitsDisposedCad: toMoney(oldAcbRemoved),
+          rawGainLossCad: toMoney(netGainLoss),
           isSuperficialLoss: false,
-          superficialLossDeniedCad: 0,
+          superficialLossDeniedCad: toMoney(0),
           isPermanentlyDeniedInRegistered: false,
-          recognizedGainLossCad: netGainLoss,
+          recognizedGainLossCad: toMoney(netGainLoss),
           dispositionTransactionId: tx.id,
           statutoryCitations: [caResult.statutoryBasis],
           explanation: caResult.explanation,
@@ -264,11 +256,11 @@ export function runAcbEngine(
       }
 
       // Record income / ROC from CA
-      if (caResult.dividendIncomeCad > 0) {
-        totalDivCad = totalDivCad.plus(d(caResult.dividendIncomeCad));
+      if (divInc.isPositive()) {
+        totalDivCad = totalDivCad.plus(divInc);
       }
-      if (caResult.returnOfCapitalCad > 0) {
-        totalRocCad = totalRocCad.plus(d(caResult.returnOfCapitalCad));
+      if (rocInc.isPositive()) {
+        totalRocCad = totalRocCad.plus(rocInc);
       }
 
       // Ledger entry
@@ -280,14 +272,14 @@ export function runAcbEngine(
         transactionId: tx.id,
         transactionType: tx.transactionType,
         description: `Corporate Action: ${tx.corporateAction.treatment} (${caResult.statutoryBasis})`,
-        quantityChange: caResult.newSharesQty - caResult.oldSharesDisposedQty,
+        quantityChange: toShares(newSharesQty.minus(oldSharesDisposed)),
         runningQuantity: toShares(targetBook.quantity),
-        costChangeCad: caResult.newSharesTotalAcbCad - caResult.oldSharesAcbRemovedCad,
+        costChangeCad: toMoney(newSharesTotalAcb.minus(oldAcbRemoved)),
         runningTotalAcbCad: toMoney(targetBook.totalAcbCad),
         runningAcbPerUnitCad: toMoney(targetBook.acbPerUnitCad),
-        realizedGainLossCad: caResult.realizedCapitalGainCad || -caResult.realizedCapitalLossCad || undefined,
+        realizedGainLossCad: realizedGain.isPositive() ? toMoney(realizedGain) : (realizedLoss.isPositive() ? toMoney(realizedLoss.negated()) : undefined),
         originalCurrency: tx.currency,
-        fxRateUsed: d(tx.fxRate || 1).toNumber(),
+        fxRateUsed: toRate(d(tx.fxRate || 1)),
         fxRateSource: tx.fxRateSource,
         statutoryRule: caResult.statutoryBasis,
         notes: caResult.explanation,
@@ -306,18 +298,20 @@ export function runAcbEngine(
       tx.transactionType.startsWith('ASSIGNED_') ||
       tx.transactionType.startsWith('OPT_EXPIRY_')
     ) {
+      const strikeVal = d(sec?.optionDetails?.strike ?? tx.price ?? 100);
+      const multVal = d(sec?.optionDetails?.multiplier ?? 100).toNumber();
       const optDetails = {
         underlyingSymbol: sec?.optionDetails?.underlyingSymbol || tx.symbol.split(' ')[0] || tx.symbol,
         putOrCall: (sec?.optionDetails?.putOrCall || (tx.transactionType.includes('PUT') ? 'PUT' : 'CALL')) as 'PUT' | 'CALL',
-        strike: d(sec?.optionDetails?.strike ?? tx.price ?? 100).toNumber(),
+        strike: strikeVal.toString(),
         expiryDate: sec?.optionDetails?.expiryDate || tx.date,
-        multiplier: d(sec?.optionDetails?.multiplier ?? 100).toNumber(),
+        multiplier: multVal,
       };
 
       const seriesKey = getOptionSeriesKey(
         optDetails.underlyingSymbol,
         optDetails.putOrCall,
-        optDetails.strike,
+        strikeVal.toNumber(),
         optDetails.expiryDate,
         optDetails.multiplier
       );
@@ -327,15 +321,15 @@ export function runAcbEngine(
           seriesKey,
           underlyingSymbol: optDetails.underlyingSymbol,
           putOrCall: optDetails.putOrCall,
-          strike: optDetails.strike,
+          strike: toMoney(strikeVal),
           expiryDate: optDetails.expiryDate,
           multiplier: optDetails.multiplier,
-          longContracts: 0,
-          totalLongAcbCad: 0,
-          longAcbPerContractCad: 0,
-          shortContracts: 0,
-          totalUnearnedPremiumCad: 0,
-          unearnedPremiumPerContractCad: 0,
+          longContracts: '0',
+          totalLongAcbCad: '0.00',
+          longAcbPerContractCad: '0.00',
+          shortContracts: '0',
+          totalUnearnedPremiumCad: '0.00',
+          unearnedPremiumPerContractCad: '0.00',
         });
       }
 
@@ -343,8 +337,8 @@ export function runAcbEngine(
       const { effect, updatedState } = evaluateOptionTaxEffect(
         tx,
         optState,
-        book.quantity.toNumber(),
-        book.totalAcbCad.toNumber()
+        book.quantity,
+        book.totalAcbCad
       );
       optionBooks.set(seriesKey, updatedState);
 
@@ -355,9 +349,10 @@ export function runAcbEngine(
         const targetBookId = underlyingSec ? underlyingSec.id : tx.securityId + '_UNDERLYING';
         const targetBook = getBook(targetBookId, underlyingSymbol);
         
-        if (effect.shareDeltaQty > 0) {
+        const deltaQty = d(effect.shareDeltaQty);
+        if (deltaQty.isPositive()) {
           // Acquire shares (e.g. Exercise Long Call, Assigned Short Put)
-          const addedQty = d(effect.shareDeltaQty);
+          const addedQty = deltaQty;
           const addedCost = d(effect.shareCostCad);
 
           targetBook.quantity = targetBook.quantity.plus(addedQty);
@@ -368,9 +363,9 @@ export function runAcbEngine(
             rf.acquisitionsQuantity = toShares(d(rf.acquisitionsQuantity).plus(addedQty));
             rf.acquisitionsCostCad = toMoney(d(rf.acquisitionsCostCad).plus(addedCost));
           });
-        } else if (effect.shareDeltaQty < 0) {
+        } else if (deltaQty.isNegative()) {
           // Dispose shares (e.g. Assigned Short Call, Exercise Long Put)
-          const disposedQty = d(effect.shareDeltaQty).abs();
+          const disposedQty = deltaQty.abs();
           const perUnitAcb = targetBook.acbPerUnitCad;
           const acbRemoved = perUnitAcb.times(disposedQty);
           const grossProceeds = d(effect.shareProceedsCad);
@@ -396,7 +391,7 @@ export function runAcbEngine(
             acbOfUnitsDisposedCad: toMoney(acbRemoved),
             rawGainLossCad: toMoney(netGainLoss),
             isSuperficialLoss: false,
-            superficialLossDeniedCad: 0,
+            superficialLossDeniedCad: toMoney(0),
             isPermanentlyDeniedInRegistered: false,
             recognizedGainLossCad: toMoney(netGainLoss),
             dispositionTransactionId: tx.id,
@@ -424,7 +419,7 @@ export function runAcbEngine(
           acbOfUnitsDisposedCad: toMoney(d(optState.longAcbPerContractCad).times(d(tx.quantity))),
           rawGainLossCad: effect.optionGainLossCad,
           isSuperficialLoss: false,
-          superficialLossDeniedCad: 0,
+          superficialLossDeniedCad: toMoney(0),
           isPermanentlyDeniedInRegistered: false,
           recognizedGainLossCad: effect.optionGainLossCad,
           dispositionTransactionId: tx.id,
@@ -432,6 +427,11 @@ export function runAcbEngine(
           explanation: effect.optionExplanation,
         });
       }
+
+      const qChange = effect.isShareTransaction
+        ? effect.shareDeltaQty
+        : (tx.transactionType.includes('BUY') ? toShares(tx.quantity) : toShares(d(tx.quantity).negated()));
+      const cChange = effect.shareCostCad || (tx.transactionType.includes('BUY') ? toMoney(d(tx.amountCad)) : '0.00');
 
       ledger.push({
         id: `LED_${tx.id}`,
@@ -441,14 +441,14 @@ export function runAcbEngine(
         transactionId: tx.id,
         transactionType: tx.transactionType,
         description: effect.optionExplanation,
-        quantityChange: effect.shareDeltaQty || (tx.transactionType.includes('BUY') ? toShares(tx.quantity) : -toShares(tx.quantity)),
+        quantityChange: qChange,
         runningQuantity: toShares(book.quantity),
-        costChangeCad: effect.shareCostCad || (tx.transactionType.includes('BUY') ? toMoney(d(tx.amountCad)) : 0),
+        costChangeCad: cChange,
         runningTotalAcbCad: toMoney(book.totalAcbCad),
         runningAcbPerUnitCad: toMoney(book.acbPerUnitCad),
-        realizedGainLossCad: effect.optionGainLossCad || undefined,
+        realizedGainLossCad: effect.optionGainLossCad !== '0.00' ? effect.optionGainLossCad : undefined,
         originalCurrency: tx.currency,
-        fxRateUsed: d(tx.fxRate || 1).toNumber(),
+        fxRateUsed: toRate(d(tx.fxRate || 1)),
         fxRateSource: tx.fxRateSource,
         statutoryRule: effect.statutoryBasis,
         notes: effect.optionExplanation,
@@ -494,7 +494,7 @@ export function runAcbEngine(
         runningTotalAcbCad: toMoney(book.totalAcbCad),
         runningAcbPerUnitCad: toMoney(book.acbPerUnitCad),
         originalCurrency: tx.currency,
-        fxRateUsed: d(tx.fxRate || 1).toNumber(),
+        fxRateUsed: toRate(d(tx.fxRate || 1)),
         fxRateSource: tx.fxRateSource,
         statutoryRule: 'ITA s. 47(1) Average Cost Pool Recomputation',
       });
@@ -528,22 +528,21 @@ export function runAcbEngine(
 
       // Check Superficial Loss
       const isLoss = rawGainLoss.isNegative();
-      const rawLossAmount = isLoss ? rawGainLoss.abs().toNumber() : 0;
 
       const slCheck = evaluateSuperficialLoss(
         tx,
-        rawLossAmount,
-        qtyDisposed.toNumber(),
+        isLoss ? rawGainLoss.abs() : new Decimal(0),
+        qtyDisposed,
         sortedTx,
         accountMap,
-        book.quantity.toNumber(),
+        book.quantity,
         referenceDate
       );
 
-      let finalRecognizedGainLoss = rawGainLoss.toNumber();
+      let finalRecognizedGainLoss = rawGainLoss;
 
       if (slCheck.isSuperficial) {
-        finalRecognizedGainLoss = -slCheck.allowedLossCad;
+        finalRecognizedGainLoss = d(slCheck.allowedLossCad).negated();
 
         superficialLosses.push({
           dispositionTransactionId: tx.id,
@@ -562,7 +561,7 @@ export function runAcbEngine(
         });
 
         // Add denied loss back to replacement ACB if in taxable account
-        if (!slCheck.isPermanentlyDeniedInRegistered && slCheck.deniedLossCad > 0) {
+        if (!slCheck.isPermanentlyDeniedInRegistered && d(slCheck.deniedLossCad).isPositive()) {
           book.totalAcbCad = book.totalAcbCad.plus(d(slCheck.deniedLossCad));
           book.acbPerUnitCad = book.quantity.isPositive() ? book.totalAcbCad.dividedBy(book.quantity) : new Decimal(0);
 
@@ -616,15 +615,15 @@ export function runAcbEngine(
         transactionId: tx.id,
         transactionType: tx.transactionType,
         description: `Disposition of ${toShares(qtyDisposed)} units at proceeds $${toMoney(netProceeds)} CAD vs ACB $${toMoney(acbRemoved)} CAD`,
-        quantityChange: -toShares(qtyDisposed),
+        quantityChange: toShares(qtyDisposed.negated()),
         runningQuantity: toShares(book.quantity),
-        costChangeCad: -toMoney(acbRemoved),
+        costChangeCad: toMoney(acbRemoved.negated()),
         runningTotalAcbCad: toMoney(book.totalAcbCad),
         runningAcbPerUnitCad: toMoney(book.acbPerUnitCad),
         realizedGainLossCad: toMoney(finalRecognizedGainLoss),
-        superficialLossAdjustmentCad: slCheck.deniedLossCad || undefined,
+        superficialLossAdjustmentCad: slCheck.deniedLossCad !== '0.00' ? slCheck.deniedLossCad : undefined,
         originalCurrency: tx.currency,
-        fxRateUsed: d(tx.fxRate || 1).toNumber(),
+        fxRateUsed: toRate(d(tx.fxRate || 1)),
         fxRateSource: tx.fxRateSource,
         statutoryRule: 'ITA s. 40(1)(a) Capital Gain/Loss Disposition',
         notes: slCheck.explanation,
@@ -659,15 +658,15 @@ export function runAcbEngine(
           symbol: tx.symbol,
           securityName: secName,
           assetClass: sec?.assetClass || 'STK',
-          quantityDisposed: 0,
+          quantityDisposed: '0',
           grossProceedsCad: toMoney(excessGain),
-          dispositionOutlaysCad: 0,
+          dispositionOutlaysCad: '0.00',
           netProceedsCad: toMoney(excessGain),
-          acbPerUnitPriorCad: 0,
-          acbOfUnitsDisposedCad: 0,
+          acbPerUnitPriorCad: '0.00',
+          acbOfUnitsDisposedCad: '0.00',
           rawGainLossCad: toMoney(excessGain),
           isSuperficialLoss: false,
-          superficialLossDeniedCad: 0,
+          superficialLossDeniedCad: '0.00',
           isPermanentlyDeniedInRegistered: false,
           recognizedGainLossCad: toMoney(excessGain),
           dispositionTransactionId: tx.id,
@@ -691,14 +690,14 @@ export function runAcbEngine(
         transactionId: tx.id,
         transactionType: tx.transactionType,
         description: `Return of Capital distribution of $${toMoney(rocAmount)} CAD. ${excessGain.isPositive() ? `Excess $${toMoney(excessGain)} deemed capital gain.` : ''}`,
-        quantityChange: 0,
+        quantityChange: '0',
         runningQuantity: toShares(book.quantity),
-        costChangeCad: -toMoney(rocAmount.minus(excessGain)),
+        costChangeCad: toMoney(rocAmount.minus(excessGain).negated()),
         runningTotalAcbCad: toMoney(book.totalAcbCad),
         runningAcbPerUnitCad: toMoney(book.acbPerUnitCad),
         realizedGainLossCad: excessGain.isPositive() ? toMoney(excessGain) : undefined,
         originalCurrency: tx.currency,
-        fxRateUsed: d(tx.fxRate || 1).toNumber(),
+        fxRateUsed: toRate(d(tx.fxRate || 1)),
         fxRateSource: tx.fxRateSource,
         statutoryRule: 'ITA s. 53(2)(a) & s. 40(3) ROC Reduction',
       });
@@ -719,7 +718,7 @@ export function runAcbEngine(
     });
   });
 
-  const securityBalances = new Map<string, { quantity: number; totalAcbCad: number; acbPerUnitCad: number; symbol: string; name: string }>();
+  const securityBalances = new Map<string, { quantity: string; totalAcbCad: string; acbPerUnitCad: string; symbol: string; name: string }>();
   books.forEach((book, secId) => {
     securityBalances.set(secId, {
       quantity: toShares(book.quantity),
@@ -733,10 +732,11 @@ export function runAcbEngine(
   let totalGain = new Decimal(0);
   let totalLoss = new Decimal(0);
   realizedGainsLosses.forEach((rgl) => {
-    if (rgl.recognizedGainLossCad > 0) {
-      totalGain = totalGain.plus(d(rgl.recognizedGainLossCad));
-    } else if (rgl.recognizedGainLossCad < 0) {
-      totalLoss = totalLoss.plus(d(rgl.recognizedGainLossCad).abs());
+    const amount = d(rgl.recognizedGainLossCad);
+    if (amount.isPositive()) {
+      totalGain = totalGain.plus(amount);
+    } else if (amount.isNegative()) {
+      totalLoss = totalLoss.plus(amount.abs());
     }
   });
 
