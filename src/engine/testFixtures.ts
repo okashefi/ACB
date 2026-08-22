@@ -894,7 +894,7 @@ export function runAllTestFixtures(): TestFixtureResult[] {
 
     results.push({
       id: 'transfer-tfsa-gain-recognized',
-      name: 'In-Kind Transfer to TFSA at Gain (ITA s. 70(5) / s. 40(1))',
+      name: 'In-Kind Transfer to TFSA at Gain (ITA s. 69 / s. 40(1))',
       category: 'Transfers',
       description: 'Transfer 100 shares ACB $20 ($2,000) to TFSA at FMV $25 ($2,500). $500 capital gain recognized in full.',
       statutoryCitations: ['ITA s. 40(1)'],
@@ -951,6 +951,48 @@ export function runAllTestFixtures(): TestFixtureResult[] {
       passed,
       expectedResult: 'Pool Qty: 100, Pool ACB: $2,000.00 CAD, Realized Dispositions: 0',
       actualResult: `Pool Qty: ${balance?.quantity || 0}, Pool ACB: $${balance?.totalAcbCad || 0} CAD, Realized Dispositions: ${out.realizedGainsLosses.length}`,
+      auditTrail: out.auditTrail,
+      executionTimeMs: performance.now() - start,
+    });
+  }
+
+  // 22. Transfer OUT/IN with unknown account -> status needs_review, no deemed disposition posted
+  {
+    const start = performance.now();
+    const sec: SecurityMaster = { id: 'SEC_X4', symbol: 'XFER4', name: 'Transfer Co 4', assetClass: 'STK', currency: 'CAD' };
+
+    const txs: Transaction[] = [
+      {
+        id: 'X4_1', accountId: 'ACCT_TAXABLE', securityId: 'SEC_X4', symbol: 'XFER4', date: '2024-01-10',
+        transactionType: 'BUY', quantity: '100', price: '20', currency: 'CAD', commission: '0', totalGrossAmount: '2000',
+        totalNetAmount: '2000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '2000', commissionCad: '0', totalOutlaysCad: '0',
+        status: 'approved', source: 'TEST_FIXTURE',
+      },
+      {
+        id: 'X4_2', accountId: 'ACCT_TAXABLE', securityId: 'SEC_X4', symbol: 'XFER4', date: '2024-03-15',
+        transactionType: 'TRANSFER_OUT', quantity: '50', price: '25', currency: 'CAD', commission: '0', totalGrossAmount: '1250',
+        totalNetAmount: '1250', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '1250', commissionCad: '0', totalOutlaysCad: '0',
+        reviewNotes: 'Transfer to unknown account', status: 'approved', source: 'TEST_FIXTURE',
+      },
+    ];
+
+    const out = runAcbEngine(txs, [taxableAcct], [sec]);
+    const balance = out.securityBalances.get('SEC_X4');
+
+    const passed = txs[1].status === 'needs_review' &&
+      Number(balance?.quantity || 0) === 100 &&
+      Number(balance?.totalAcbCad || 0) === 2000 &&
+      out.realizedGainsLosses.length === 0;
+
+    results.push({
+      id: 'transfer-unknown-account-needs-review',
+      name: 'Transfer to Unknown Account (Needs Review, No Disposition)',
+      category: 'Transfers',
+      description: 'Transfer OUT to unknown destination marks transaction needs_review and does not post a deemed disposition.',
+      statutoryCitations: [],
+      passed,
+      expectedResult: 'Status: needs_review, Pool Qty: 100, Dispositions: 0',
+      actualResult: `Status: ${txs[1].status}, Pool Qty: ${balance?.quantity || 0}, Dispositions: ${out.realizedGainsLosses.length}`,
       auditTrail: out.auditTrail,
       executionTimeMs: performance.now() - start,
     });

@@ -23,6 +23,12 @@ export interface ParsedFlexStatement {
   errors: string[];
 }
 
+const isAssignmentCode = (codeStr: string): boolean => {
+  if (!codeStr) return false;
+  const tokens = codeStr.split(/[;,; ]+/).map((s) => s.trim());
+  return tokens.includes('A') || codeStr.toLowerCase().includes('assign');
+};
+
 export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
   const parser = new XMLParser({
     ignoreAttributes: false,
@@ -174,7 +180,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
       }
 
       // Check assignment / exercise code
-      if (code.includes('A') || code.includes('Assign')) {
+      if (isAssignmentCode(code)) {
         txType = buySell.includes('BUY') ? 'ASSIGNED_SHORT_PUT' : 'ASSIGNED_SHORT_CALL';
       } else if (code.includes('Ex') || code.includes('Exerc')) {
         txType = buySell.includes('BUY') ? 'EXERCISE_LONG_CALL' : 'EXERCISE_LONG_PUT';
@@ -394,19 +400,22 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
       const isPut = rawType.includes('PUT') || rawType === 'P' || rawType.endsWith(' P');
       const code = opt.code || opt.notes || '';
       let txType: Transaction['transactionType'] = 'EXERCISE_LONG_CALL';
-      if (rawType.includes('ASSIGN') || code.includes('A')) {
+      if (rawType.includes('ASSIGN') || isAssignmentCode(code)) {
         txType = isPut ? 'ASSIGNED_SHORT_PUT' : 'ASSIGNED_SHORT_CALL';
       } else {
         txType = isPut ? 'EXERCISE_LONG_PUT' : 'EXERCISE_LONG_CALL';
       }
 
-      // Check if already present from Trades section (share tradeID or conid+date or date+symbol)
+      // Check if already present from Trades section (share tradeID, executionID, or conid+date+qty)
       const existingTradeIndex = transactions.findIndex((t) => {
-        if (t.ibkrTransactionId && optId && t.ibkrTransactionId === optId) return true;
-        if (t.ibkrExecutionId && optId && t.ibkrExecutionId === optId) return true;
-        if (t.id === `IBKR_TR_${optId}` || t.id === `IBKR_OPT_${optId}`) return true;
-        if (t.date === date && (t.securityId === secId || t.symbol === symbol || t.symbol === opt.underlyingSymbol)) {
-          return true;
+        if (optId) {
+          if (t.ibkrTransactionId && t.ibkrTransactionId === optId) return true;
+          if (t.ibkrExecutionId && t.ibkrExecutionId === optId) return true;
+          if (t.id === `IBKR_TR_${optId}` || t.id === `IBKR_OPT_${optId}`) return true;
+        }
+        if (conid && t.date === date && t.securityId === `CON_${conid}`) {
+          const tQty = Math.abs(parseFloat(t.quantity || '0'));
+          if (tQty === qty || tQty === qty * 100) return true;
         }
         return false;
       });
@@ -509,7 +518,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
         totalOutlaysCad: '0',
         ibkrTransactionId: xferId,
         reviewNotes: `${isOut ? 'Transfer OUT to' : 'Transfer IN from'} ${targetAcctId || 'other account'} (${otherAcctType?.toUpperCase() || 'UNKNOWN'})`,
-        status: 'auto_approved',
+        status: otherAcctType ? 'auto_approved' : 'needs_review',
         source: 'IBKR_FLEX_API',
       });
     }

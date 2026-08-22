@@ -472,6 +472,12 @@ export function runAcbEngine(
         notes.includes('TFSA') || notes.includes('RRSP') || notes.includes('FHSA');
       const isFromTaxable = srcAcctType === 'taxable' || notes.includes('MARGIN') || notes.includes('TAXABLE');
 
+      if (tx.status === 'needs_review' || (!isFromRegistered && !isFromTaxable)) {
+        tx.status = 'needs_review';
+        auditTrail.push(`[${tx.date}] TRANSFER_IN ${toShares(d(tx.quantity))} ${tx.symbol}: Source account type unknown. Transaction marked needs_review; pool unchanged.`);
+        continue;
+      }
+
       if (isFromTaxable && !isFromRegistered) {
         // Taxable -> Taxable (same taxpayer): ignore both legs under unified ITA s. 47 pool
         auditTrail.push(`[${tx.date}] TRANSFER_IN ${toShares(d(tx.quantity))} ${tx.symbol}: Taxable-to-taxable transfer ignored under unified ITA s. 47 pool.`);
@@ -569,6 +575,12 @@ export function runAcbEngine(
         notes.includes('TFSA') || notes.includes('RRSP') || notes.includes('FHSA');
       const isToTaxable = dstAcctType === 'taxable' || notes.includes('MARGIN') || notes.includes('TAXABLE');
 
+      if (tx.status === 'needs_review' || (!isToRegistered && !isToTaxable)) {
+        tx.status = 'needs_review';
+        auditTrail.push(`[${tx.date}] TRANSFER_OUT ${toShares(d(tx.quantity))} ${tx.symbol}: Destination account type unknown. Transaction marked needs_review; no deemed disposition posted.`);
+        continue;
+      }
+
       if (isToTaxable && !isToRegistered) {
         // Taxable -> Taxable (same taxpayer): ignore both legs under unified ITA s. 47 pool
         auditTrail.push(`[${tx.date}] TRANSFER_OUT ${toShares(d(tx.quantity))} ${tx.symbol}: Taxable-to-taxable transfer ignored under unified ITA s. 47 pool.`);
@@ -631,7 +643,7 @@ export function runAcbEngine(
         isPermanentlyDeniedInRegistered: isLoss,
         recognizedGainLossCad: toMoney(recognizedGainLoss),
         dispositionTransactionId: tx.id,
-        statutoryCitations: isLoss ? ['ITA s. 40(2)(g)(iv)'] : ['ITA s. 70(5)', 'ITA s. 40(1)'],
+        statutoryCitations: isLoss ? ['ITA s. 40(2)(g)(iv)'] : ['ITA s. 69', 'ITA s. 40(1)'],
         explanation: isLoss
           ? 'Transfer to registered account at loss: loss permanently denied under ITA s. 40(2)(g)(iv).'
           : `Transfer to registered account at FMV proceeds $${toMoney(grossProceeds)} CAD vs ACB $${toMoney(acbRemoved)} CAD. Capital gain recognized.`,
@@ -659,7 +671,7 @@ export function runAcbEngine(
         originalCurrency: tx.currency,
         fxRateUsed: toRate(d(tx.fxRate || 1)),
         fxRateSource: tx.fxRateSource,
-        statutoryRule: isLoss ? 'ITA s. 40(2)(g)(iv) Loss Permanently Denied on Registered Transfer' : 'ITA s. 70(5) Deemed Disposition at FMV',
+        statutoryRule: isLoss ? 'ITA s. 40(2)(g)(iv) Loss Permanently Denied on Registered Transfer' : 'ITA s. 69 / s. 40(1) Deemed Disposition at FMV',
       });
 
       auditTrail.push(
