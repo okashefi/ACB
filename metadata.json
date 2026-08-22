@@ -1,0 +1,6 @@
+{
+  "name": "Canadian ACB Calculator",
+  "description": "Adjusted Cost Base & Capital Gains engine for Canadian resident taxpayers with IBKR Flex Web Service integration and CRA Income Tax Act compliance.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

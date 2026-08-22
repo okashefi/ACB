@@ -1,0 +1,400 @@
+import React from 'react';
+import {
+  TrendingUp,
+  TrendingDown,
+  ShieldCheck,
+  AlertTriangle,
+  Database,
+  ArrowUpRight,
+  ArrowDownRight,
+  FileCheck2,
+  Calendar,
+  Layers,
+  Sparkles,
+  Info,
+  DollarSign,
+  Activity,
+  CheckCircle2,
+} from 'lucide-react';
+import {
+  CalculationEngineOutput,
+  FlexConnectorConfig,
+  Transaction,
+  SecurityMaster,
+} from '../types/tax';
+import { formatCad, formatShares } from '../engine/decimal';
+
+interface DashboardViewProps {
+  engineOutput: CalculationEngineOutput;
+  flexConfig: FlexConnectorConfig;
+  transactions: Transaction[];
+  securities: SecurityMaster[];
+  selectedTaxYear: number | 'ALL';
+  onNavigateToTab: (tab: any) => void;
+  onOpenReview: (txId: string) => void;
+  onLoadDemoData: () => void;
+}
+
+export const DashboardView: React.FC<DashboardViewProps> = ({
+  engineOutput,
+  flexConfig,
+  transactions,
+  securities,
+  selectedTaxYear,
+  onNavigateToTab,
+  onOpenReview,
+  onLoadDemoData,
+}) => {
+  const pendingReviews = transactions.filter((t) => t.status === 'needs_review');
+
+  // Filter realized gains by selected tax year
+  const filteredGains = selectedTaxYear === 'ALL'
+    ? engineOutput.realizedGainsLosses
+    : engineOutput.realizedGainsLosses.filter((r) => r.taxYear === selectedTaxYear);
+
+  let yearGain = 0;
+  let yearLoss = 0;
+  filteredGains.forEach((r) => {
+    if (r.recognizedGainLossCad > 0) yearGain += r.recognizedGainLossCad;
+    else if (r.recognizedGainLossCad < 0) yearLoss += Math.abs(r.recognizedGainLossCad);
+  });
+  const netGainLoss = yearGain - yearLoss;
+
+  // Calculate total portfolio ACB
+  let totalPortfolioAcb = 0;
+  engineOutput.securityBalances.forEach((bal) => {
+    if (bal.quantity > 0) {
+      totalPortfolioAcb += bal.totalAcbCad;
+    }
+  });
+
+  // Total superficial loss denied
+  const totalSuperficialDenied = engineOutput.superficialLosses.reduce((acc, s) => acc + s.deniedLossCad, 0);
+
+  return (
+    <div id="dashboard-container" className="space-y-6">
+      
+      {/* Top Banner: Sync & Health State */}
+      <div className="bg-white border border-[#E4E4E7] rounded-2xl p-5 shadow-2xs text-[#18181B] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+            flexConfig.status === 'CONNECTED'
+              ? 'bg-[#ECFDF5] text-[#059669] border border-[#A7F3D0]'
+              : 'bg-[#FFFBEB] text-[#D97706] border border-[#FDE68A]'
+          }`}>
+            <Database className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="font-semibold text-sm text-[#18181B]">
+                IBKR Flex Web Service: {flexConfig.status === 'CONNECTED' ? 'Active & Synced' : 'Ready / Sandbox Mode'}
+              </h2>
+              <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${
+                flexConfig.status === 'CONNECTED' ? 'bg-[#ECFDF5] text-[#059669] border border-[#A7F3D0]' : 'bg-[#F4F4F5] text-[#71717A] border border-[#E4E4E7]'
+              }`}>
+                Query: {flexConfig.queryId || 'AF_CANADIAN_ACB'}
+              </span>
+            </div>
+            <p className="text-xs text-[#71717A] mt-0.5">
+              {flexConfig.lastSyncTimestamp
+                ? `Last successful sync: ${new Date(flexConfig.lastSyncTimestamp).toLocaleString()}`
+                : 'Using loaded tax ledger. Connect your IBKR Flex Token or upload files to update.'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+          {transactions.length === 0 && (
+            <button
+              id="btn-load-demo-sandbox"
+              onClick={onLoadDemoData}
+              className="px-3.5 py-2 bg-[#18181B] hover:bg-black text-white rounded-xl text-xs font-medium shadow-xs transition-colors flex items-center gap-1.5"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Load Full IBKR Sandbox Data</span>
+            </button>
+          )}
+          <button
+            id="btn-goto-connector"
+            onClick={() => onNavigateToTab('connector')}
+            className="px-3.5 py-2 bg-white hover:bg-[#F4F4F5] text-[#18181B] border border-[#E4E4E7] rounded-xl text-xs font-medium transition-colors shadow-2xs"
+          >
+            Configure Connector
+          </button>
+        </div>
+      </div>
+
+      {transactions.length === 0 ? (
+        <div className="bg-white border border-[#E4E4E7] rounded-2xl p-12 shadow-2xs text-center space-y-6">
+          <div className="w-16 h-16 bg-[#F4F4F5] rounded-full flex items-center justify-center mx-auto shadow-xs border border-[#E4E4E7]">
+            <Database className="w-8 h-8 text-[#71717A]" />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-[#18181B] mb-2">No Transactions Loaded</h2>
+            <p className="text-[#71717A] text-sm max-w-md mx-auto leading-relaxed">
+              To begin calculating your Adjusted Cost Base and capital gains, you need to import your transaction history.
+            </p>
+          </div>
+          
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
+            <button
+              onClick={onLoadDemoData}
+              className="px-5 py-2.5 bg-[#18181B] hover:bg-black text-white rounded-xl text-sm font-semibold shadow-xs transition-colors flex items-center gap-2"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>Load Sandbox Data</span>
+            </button>
+            <button
+              onClick={() => onNavigateToTab('help')}
+              className="px-5 py-2.5 bg-white hover:bg-[#F4F4F5] text-[#18181B] border border-[#E4E4E7] rounded-xl text-sm font-medium transition-colors shadow-2xs flex items-center gap-2"
+            >
+              <Info className="w-4 h-4 text-[#2563EB]" />
+              <span>Read the Guide</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Review Alert if items need attention */}
+      {pendingReviews.length > 0 && (
+        <div id="pending-review-banner" className="bg-[#FFFBEB] border border-[#FDE68A] rounded-2xl p-4 flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-[#D97706] shrink-0 mt-0.5" />
+            <div>
+              <h3 className="text-sm font-semibold text-[#92400E]">
+                {pendingReviews.length} Corporate Action{pendingReviews.length > 1 ? 's' : ''} Require Review
+              </h3>
+              <p className="text-xs text-[#B45309] mt-0.5">
+                Under CRA rules, corporate actions with mixed consideration or ambiguous cash classification cannot be posted without tax character confirmation.
+              </p>
+            </div>
+          </div>
+          <button
+            id="btn-review-now"
+            onClick={() => onNavigateToTab('review')}
+            className="px-3.5 py-2 bg-[#92400E] hover:bg-[#78350F] text-white font-medium text-xs rounded-xl shadow-xs shrink-0 transition-colors"
+          >
+            Resolve in Review Queue
+          </button>
+        </div>
+      )}
+
+      {/* 4 Core Financial KPI Metric Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        
+        {/* Card 1: Net Realized Gains */}
+        <div id="kpi-net-gains" className="bg-white border border-[#E4E4E7] rounded-2xl p-5 shadow-2xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-[#71717A]">
+              {selectedTaxYear === 'ALL' ? 'Total Realized Capital Gains' : `${selectedTaxYear} Net Capital Gains`}
+            </span>
+            <div className={`p-1.5 rounded-lg ${netGainLoss >= 0 ? 'bg-[#ECFDF5] text-[#059669]' : 'bg-[#FEF2F2] text-[#DC2626]'}`}>
+              {netGainLoss >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+            </div>
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className={`text-2xl font-bold tracking-tight ${netGainLoss >= 0 ? 'text-[#059669]' : 'text-[#DC2626]'}`}>
+              {formatCad(netGainLoss)}
+            </span>
+          </div>
+          <div className="mt-2.5 text-[11px] text-[#71717A] flex items-center justify-between border-t border-[#E4E4E7] pt-2 font-mono">
+            <span>Gains: +{formatCad(yearGain)}</span>
+            <span>Losses: -{formatCad(yearLoss)}</span>
+          </div>
+        </div>
+
+        {/* Card 2: Active Portfolio ACB */}
+        <div id="kpi-portfolio-acb" className="bg-white border border-[#E4E4E7] rounded-2xl p-5 shadow-2xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-[#71717A]">Total Taxable Portfolio ACB</span>
+            <div className="p-1.5 rounded-lg bg-[#EFF6FF] text-[#2563EB]">
+              <Layers className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="mt-2">
+            <span className="text-2xl font-bold tracking-tight text-[#18181B]">
+              {formatCad(totalPortfolioAcb)}
+            </span>
+          </div>
+          <div className="mt-2.5 text-[11px] text-[#71717A] flex items-center justify-between border-t border-[#E4E4E7] pt-2 font-mono">
+            <span>Active Pools: {(Array.from(engineOutput.securityBalances.values()) as Array<{ quantity: number }>).filter(b => b.quantity > 0).length}</span>
+            <span>ITA s. 47 Weighted Avg</span>
+          </div>
+        </div>
+
+        {/* Card 3: Superficial Loss Denied */}
+        <div id="kpi-superficial-loss" className="bg-white border border-[#E4E4E7] rounded-2xl p-5 shadow-2xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-[#71717A]">Superficial Losses Denied</span>
+            <div className="p-1.5 rounded-lg bg-[#F5F3FF] text-[#7C3AED]">
+              <ShieldCheck className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="mt-2">
+            <span className="text-2xl font-bold tracking-tight text-[#7C3AED]">
+              {formatCad(totalSuperficialDenied)}
+            </span>
+          </div>
+          <div className="mt-2.5 text-[11px] text-[#71717A] flex items-center justify-between border-t border-[#E4E4E7] pt-2 font-mono">
+            <span>30-Day Window Events: {engineOutput.superficialLosses.length}</span>
+            <span>Added to Replacement ACB</span>
+          </div>
+        </div>
+
+        {/* Card 4: Dividend & ROC Distributions */}
+        <div id="kpi-distributions" className="bg-white border border-[#E4E4E7] rounded-2xl p-5 shadow-2xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-[#71717A]">Income & ROC Distributions</span>
+            <div className="p-1.5 rounded-lg bg-[#FFFBEB] text-[#D97706]">
+              <DollarSign className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="mt-2">
+            <span className="text-2xl font-bold tracking-tight text-[#18181B]">
+              {formatCad(engineOutput.incomeDistributions.dividendsCad + engineOutput.incomeDistributions.rocCad)}
+            </span>
+          </div>
+          <div className="mt-2.5 text-[11px] text-[#71717A] flex items-center justify-between border-t border-[#E4E4E7] pt-2 font-mono">
+            <span>Div: {formatCad(engineOutput.incomeDistributions.dividendsCad)}</span>
+            <span>ROC: {formatCad(engineOutput.incomeDistributions.rocCad)}</span>
+          </div>
+        </div>
+
+      </div>
+
+      {/* Main Grid: Active Holdings ACB Table + Recent Realized Dispositions */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* Left 2 Cols: Active Securities ACB Pools */}
+        <div className="lg:col-span-2 bg-white border border-[#E4E4E7] rounded-2xl p-6 shadow-2xs space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-[#18181B]">Active Security ACB Pools (ITA s. 47)</h3>
+              <p className="text-xs text-[#71717A] mt-0.5">Consolidated across all non-registered accounts at IBKR and other brokers</p>
+            </div>
+            <button
+              onClick={() => onNavigateToTab('ledger')}
+              className="text-xs text-[#2563EB] hover:text-[#1D4ED8] font-medium flex items-center gap-1"
+            >
+              <span>Full Ledger</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="overflow-x-auto border border-[#E4E4E7] rounded-xl">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-[#F4F4F5] border-b border-[#E4E4E7] text-[#71717A] uppercase tracking-wider text-[10px]">
+                  <th className="py-3 px-3.5 font-semibold">Security</th>
+                  <th className="py-3 px-3.5 font-semibold text-right">Quantity</th>
+                  <th className="py-3 px-3.5 font-semibold text-right">Total ACB (CAD)</th>
+                  <th className="py-3 px-3.5 font-semibold text-right">ACB / Unit (CAD)</th>
+                  <th className="py-3 px-3.5 font-semibold text-center">Rule</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#E4E4E7] font-mono">
+                {Array.from(engineOutput.securityBalances.entries())
+                  .filter(([_, b]) => b.quantity > 0)
+                  .map(([secId, b]) => (
+                    <tr key={secId} className="hover:bg-[#F9FAFB] transition-colors">
+                      <td className="py-3 px-3.5">
+                        <div className="font-bold text-[#18181B]">{b.symbol}</div>
+                        <div className="text-[11px] text-[#71717A] font-sans truncate max-w-[180px]">{b.name}</div>
+                      </td>
+                      <td className="py-3 px-3.5 text-right font-medium text-[#18181B]">
+                        {formatShares(b.quantity)}
+                      </td>
+                      <td className="py-3 px-3.5 text-right font-semibold text-[#059669]">
+                        {formatCad(b.totalAcbCad)}
+                      </td>
+                      <td className="py-3 px-3.5 text-right text-[#18181B]">
+                        {formatCad(b.acbPerUnitCad)}
+                      </td>
+                      <td className="py-3 px-3.5 text-center">
+                        <span className="px-2 py-0.5 rounded-md bg-[#F4F4F5] text-[#71717A] border border-[#E4E4E7] text-[10px]">
+                          s. 47(1)
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                {(Array.from(engineOutput.securityBalances.values()) as Array<{ quantity: number }>).filter(b => b.quantity > 0).length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-[#71717A] font-sans text-xs">
+                      No active positions in the ACB pool. Load demo data or connect your IBKR token to get started.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Right 1 Col: Recent Realized Dispositions / Schedule 3 preview */}
+        <div className="bg-white border border-[#E4E4E7] rounded-2xl p-6 shadow-2xs space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-[#18181B]">Recent Dispositions</h3>
+              <p className="text-xs text-[#71717A] mt-0.5">Schedule 3 capital gains audit line items</p>
+            </div>
+            <button
+              onClick={() => onNavigateToTab('reports')}
+              className="text-xs text-[#2563EB] hover:text-[#1D4ED8] font-medium flex items-center gap-1"
+            >
+              <span>Reports</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="space-y-2.5">
+            {filteredGains.slice(-5).reverse().map((rgl) => (
+              <div key={rgl.id} className="p-3 rounded-xl bg-[#F9FAFB] border border-[#E4E4E7] flex items-center justify-between gap-2">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-xs text-[#18181B] font-mono">{rgl.symbol}</span>
+                    <span className="text-[10px] text-[#71717A] font-mono">{rgl.dispositionDate}</span>
+                  </div>
+                  <div className="text-[11px] text-[#71717A] mt-0.5">
+                    Sold {formatShares(rgl.quantityDisposed)} units • Proceeds {formatCad(rgl.netProceedsCad)}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className={`text-xs font-bold font-mono ${
+                    rgl.recognizedGainLossCad >= 0 ? 'text-[#059669]' : 'text-[#DC2626]'
+                  }`}>
+                    {rgl.recognizedGainLossCad >= 0 ? `+${formatCad(rgl.recognizedGainLossCad)}` : formatCad(rgl.recognizedGainLossCad)}
+                  </div>
+                  {rgl.isSuperficialLoss && (
+                    <span className="inline-block px-1.5 py-0.2 rounded bg-[#F3E8FF] text-[#7E22CE] border border-[#DDD6FE] text-[9px] font-mono">
+                      Superficial (Denied)
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+            {filteredGains.length === 0 && (
+              <div className="py-8 text-center text-[#71717A] text-xs">
+                No realized dispositions found in this tax year.
+              </div>
+            )}
+          </div>
+
+          {/* Trader Status / CRA Character Warning Card */}
+          <div className="bg-[#F4F4F5] border border-[#E4E4E7] rounded-xl p-3.5 text-[11px] text-[#71717A] space-y-1">
+            <div className="flex items-center gap-1.5 text-[#18181B] font-medium">
+              <Info className="w-3.5 h-3.5 text-[#2563EB] shrink-0" />
+              <span>CRA Tax Character Notice (ITA s. 9 vs s. 39)</span>
+            </div>
+            <p>
+              By default, dispositions are treated on <strong>capital account</strong> (Schedule 3). If you engage in high-frequency day trading, CRA may classify trading profits as <strong>business income</strong> (100% inclusion, mark-to-market).
+            </p>
+          </div>
+        </div>
+
+      </div>
+
+      </>
+      )}
+
+    </div>
+  );
+};
