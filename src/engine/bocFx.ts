@@ -1,3 +1,4 @@
+import Decimal from 'decimal.js';
 import { d, toMoney } from './decimal';
 
 // In-memory fallback and historical seed rates for Bank of Canada daily noon / closing rates

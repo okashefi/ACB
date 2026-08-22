@@ -463,10 +463,60 @@ export function runAcbEngine(
     // ==========================================
     // 3. ACQUISITIONS (Buy, DRIP, Transfer In, Opening Balance)
     // ==========================================
+    if (tx.transactionType === 'TRANSFER_IN') {
+      const srcAcct = tx.sourceAccountId ? accountMap.get(tx.sourceAccountId) : undefined;
+      const srcAcctType = tx.sourceAccountType || (srcAcct ? srcAcct.accountType : undefined);
+      const notes = (tx.reviewNotes || '').toUpperCase();
+
+      const isFromRegistered = ['tfsa', 'rrsp', 'rrif', 'fhsa', 'resp', 'rdsp', 'lira', 'other_registered'].includes(srcAcctType || '') ||
+        notes.includes('TFSA') || notes.includes('RRSP') || notes.includes('FHSA');
+      const isFromTaxable = srcAcctType === 'taxable' || notes.includes('MARGIN') || notes.includes('TAXABLE');
+
+      if (isFromTaxable && !isFromRegistered) {
+        // Taxable -> Taxable (same taxpayer): ignore both legs under unified ITA s. 47 pool
+        auditTrail.push(`[${tx.date}] TRANSFER_IN ${toShares(d(tx.quantity))} ${tx.symbol}: Taxable-to-taxable transfer ignored under unified ITA s. 47 pool.`);
+        continue;
+      }
+
+      // Registered -> Taxable or External -> Taxable: acquisition at FMV
+      const qty = d(tx.quantity);
+      const costCad = d(tx.amountCad).plus(d(tx.commissionCad));
+
+      book.quantity = book.quantity.plus(qty);
+      book.totalAcbCad = book.totalAcbCad.plus(costCad);
+      book.acbPerUnitCad = book.quantity.isPositive() ? book.totalAcbCad.dividedBy(book.quantity) : new Decimal(0);
+
+      recordRollforward(txYear, tx.securityId, tx.symbol, secName, (rf) => {
+        rf.acquisitionsQuantity = toShares(d(rf.acquisitionsQuantity).plus(qty));
+        rf.acquisitionsCostCad = toMoney(d(rf.acquisitionsCostCad).plus(costCad));
+      });
+
+      ledger.push({
+        id: `LED_${tx.id}`,
+        date: tx.date,
+        securityId: tx.securityId,
+        symbol: tx.symbol,
+        transactionId: tx.id,
+        transactionType: tx.transactionType,
+        description: `Transfer In of ${toShares(qty)} units at $${toMoney(costCad)} CAD FMV`,
+        quantityChange: toShares(qty),
+        runningQuantity: toShares(book.quantity),
+        costChangeCad: toMoney(costCad),
+        runningTotalAcbCad: toMoney(book.totalAcbCad),
+        runningAcbPerUnitCad: toMoney(book.acbPerUnitCad),
+        originalCurrency: tx.currency,
+        fxRateUsed: toRate(d(tx.fxRate || 1)),
+        fxRateSource: tx.fxRateSource,
+        statutoryRule: isFromRegistered ? 'In-Kind Registered-to-Taxable Transfer Acquisition at FMV' : 'ITA s. 47(1) Average Cost Pool Recomputation',
+      });
+
+      auditTrail.push(`[${tx.date}] TRANSFER_IN ${toShares(qty)} ${tx.symbol}: New Total ACB = $${toMoney(book.totalAcbCad)} CAD ($${toMoney(book.acbPerUnitCad)}/unit)`);
+      continue;
+    }
+
     if (
       tx.transactionType === 'BUY' ||
       tx.transactionType === 'DIVIDEND_REINVESTED' ||
-      tx.transactionType === 'TRANSFER_IN' ||
       tx.transactionType === 'OPENING_BALANCE'
     ) {
       const qty = d(tx.quantity);
@@ -510,9 +560,116 @@ export function runAcbEngine(
     // ==========================================
     // 4. DISPOSITIONS (Sell, Transfer Out, Worthless s.50)
     // ==========================================
+    if (tx.transactionType === 'TRANSFER_OUT') {
+      const dstAcct = tx.targetAccountId ? accountMap.get(tx.targetAccountId) : undefined;
+      const dstAcctType = tx.destinationAccountType || (dstAcct ? dstAcct.accountType : undefined);
+      const notes = (tx.reviewNotes || '').toUpperCase();
+
+      const isToRegistered = ['tfsa', 'rrsp', 'rrif', 'fhsa', 'resp', 'rdsp', 'lira', 'other_registered'].includes(dstAcctType || '') ||
+        notes.includes('TFSA') || notes.includes('RRSP') || notes.includes('FHSA');
+      const isToTaxable = dstAcctType === 'taxable' || notes.includes('MARGIN') || notes.includes('TAXABLE');
+
+      if (isToTaxable && !isToRegistered) {
+        // Taxable -> Taxable (same taxpayer): ignore both legs under unified ITA s. 47 pool
+        auditTrail.push(`[${tx.date}] TRANSFER_OUT ${toShares(d(tx.quantity))} ${tx.symbol}: Taxable-to-taxable transfer ignored under unified ITA s. 47 pool.`);
+        continue;
+      }
+
+      // Taxable -> Registered transfer: deemed disposition at FMV on the taxable pool
+      const qtyDisposed = d(tx.quantity);
+      const perUnitAcb = book.acbPerUnitCad;
+      const acbRemoved = perUnitAcb.times(qtyDisposed);
+      const grossProceeds = d(tx.amountCad); // FMV in CAD
+      const outlays = d(tx.commissionCad).plus(d(tx.taxes || 0));
+      const netProceeds = grossProceeds.minus(outlays);
+      const rawGainLoss = netProceeds.minus(acbRemoved);
+
+      // Update pool
+      book.quantity = Decimal.max(0, book.quantity.minus(qtyDisposed));
+      book.totalAcbCad = Decimal.max(0, book.totalAcbCad.minus(acbRemoved));
+      book.acbPerUnitCad = book.quantity.isPositive() ? book.totalAcbCad.dividedBy(book.quantity) : new Decimal(0);
+
+      const isLoss = rawGainLoss.isNegative();
+      const recognizedGainLoss = isLoss ? d(0) : rawGainLoss;
+
+      if (isLoss) {
+        const deniedAmt = rawGainLoss.abs();
+        superficialLosses.push({
+          dispositionTransactionId: tx.id,
+          securityId: tx.securityId,
+          symbol: tx.symbol,
+          dispositionDate: tx.date,
+          rawCapitalLossCad: toMoney(deniedAmt),
+          deniedLossCad: toMoney(deniedAmt),
+          allowedLossCad: '0.00',
+          replacementAccountId: tx.targetAccountId || tx.accountId,
+          replacementDate: tx.date,
+          isPermanentlyDeniedInRegistered: true,
+          status: 'final',
+          explanation: 'Loss on transfer to registered account (TFSA/RRSP/FHSA) permanently denied under ITA s. 40(2)(g)(iv).',
+        });
+      }
+
+      realizedGainsLosses.push({
+        id: `RGL_${tx.id}`,
+        taxYear: txYear,
+        dispositionDate: tx.date,
+        settlementDate: tx.settlementDate,
+        securityId: tx.securityId,
+        symbol: tx.symbol,
+        securityName: secName,
+        assetClass: sec?.assetClass || 'STK',
+        quantityDisposed: toShares(qtyDisposed),
+        grossProceedsCad: toMoney(grossProceeds),
+        dispositionOutlaysCad: toMoney(outlays),
+        netProceedsCad: toMoney(netProceeds),
+        acbPerUnitPriorCad: toMoney(perUnitAcb),
+        acbOfUnitsDisposedCad: toMoney(acbRemoved),
+        rawGainLossCad: toMoney(rawGainLoss),
+        isSuperficialLoss: isLoss,
+        superficialLossDeniedCad: isLoss ? toMoney(rawGainLoss.abs()) : '0.00',
+        isPermanentlyDeniedInRegistered: isLoss,
+        recognizedGainLossCad: toMoney(recognizedGainLoss),
+        dispositionTransactionId: tx.id,
+        statutoryCitations: isLoss ? ['ITA s. 40(2)(g)(iv)'] : ['ITA s. 70(5)', 'ITA s. 40(1)'],
+        explanation: isLoss
+          ? 'Transfer to registered account at loss: loss permanently denied under ITA s. 40(2)(g)(iv).'
+          : `Transfer to registered account at FMV proceeds $${toMoney(grossProceeds)} CAD vs ACB $${toMoney(acbRemoved)} CAD. Capital gain recognized.`,
+      });
+
+      recordRollforward(txYear, tx.securityId, tx.symbol, secName, (rf) => {
+        rf.dispositionsQuantity = toShares(d(rf.dispositionsQuantity).plus(qtyDisposed));
+        rf.dispositionsAcbRemovedCad = toMoney(d(rf.dispositionsAcbRemovedCad).plus(acbRemoved));
+      });
+
+      ledger.push({
+        id: `LED_${tx.id}`,
+        date: tx.date,
+        securityId: tx.securityId,
+        symbol: tx.symbol,
+        transactionId: tx.id,
+        transactionType: tx.transactionType,
+        description: `Transfer Out (In-Kind Deemed Disposition) of ${toShares(qtyDisposed)} units to ${dstAcctType?.toUpperCase() || 'REGISTERED'}. Proceeds: $${toMoney(grossProceeds)} CAD`,
+        quantityChange: toShares(qtyDisposed.negated()),
+        runningQuantity: toShares(book.quantity),
+        costChangeCad: toMoney(acbRemoved.negated()),
+        runningTotalAcbCad: toMoney(book.totalAcbCad),
+        runningAcbPerUnitCad: toMoney(book.acbPerUnitCad),
+        realizedGainLossCad: toMoney(recognizedGainLoss),
+        originalCurrency: tx.currency,
+        fxRateUsed: toRate(d(tx.fxRate || 1)),
+        fxRateSource: tx.fxRateSource,
+        statutoryRule: isLoss ? 'ITA s. 40(2)(g)(iv) Loss Permanently Denied on Registered Transfer' : 'ITA s. 70(5) Deemed Disposition at FMV',
+      });
+
+      auditTrail.push(
+        `[${tx.date}] TRANSFER_OUT ${toShares(qtyDisposed)} ${tx.symbol} to ${dstAcctType || 'REGISTERED'}: Realized Gain/Loss = $${toMoney(recognizedGainLoss)} CAD`
+      );
+      continue;
+    }
+
     if (
       tx.transactionType === 'SELL' ||
-      tx.transactionType === 'TRANSFER_OUT' ||
       tx.transactionType === 'WORTHLESS_SECURITIES_S50'
     ) {
       const qtyDisposed = d(tx.quantity);
@@ -543,20 +700,9 @@ export function runAcbEngine(
 
       let finalRecognizedGainLoss = rawGainLoss;
 
-      const acct = accountMap.get(tx.accountId);
-      const isRegisteredTransfer = acct
-        ? ['tfsa', 'rrsp', 'rrif', 'fhsa', 'resp', 'rdsp', 'lira', 'other_registered'].includes(acct.accountType)
-        : (tx.reviewNotes || '').toUpperCase().includes('TFSA') || (tx.reviewNotes || '').toUpperCase().includes('RRSP') || (tx.reviewNotes || '').toUpperCase().includes('FHSA');
-
-      const isTaxableToTaxableTransfer = tx.transactionType === 'TRANSFER_OUT' && !isRegisteredTransfer;
-
-      if (isTaxableToTaxableTransfer) {
-        // Same-taxpayer taxable-to-taxable transfer = no disposition
-        finalRecognizedGainLoss = d(0);
-      } else if (slCheck.isSuperficial || (tx.transactionType === 'TRANSFER_OUT' && isRegisteredTransfer && isLoss)) {
-        // Transfers into tfsa/rrsp/fhsa = deemed disposition at FMV + superficial loss check
-        const deniedAmt = isRegisteredTransfer && isLoss ? rawGainLoss.abs() : slCheck.deniedLossCad;
-        const allowedAmt = isRegisteredTransfer && isLoss ? d(0) : slCheck.allowedLossCad;
+      if (slCheck.isSuperficial) {
+        const deniedAmt = slCheck.deniedLossCad;
+        const allowedAmt = slCheck.allowedLossCad;
         finalRecognizedGainLoss = d(allowedAmt).negated();
 
         superficialLosses.push({
@@ -570,13 +716,13 @@ export function runAcbEngine(
           replacementTransactionId: slCheck.replacementTransactionId,
           replacementAccountId: slCheck.replacementAccountId,
           replacementDate: slCheck.replacementDate,
-          isPermanentlyDeniedInRegistered: isRegisteredTransfer || slCheck.isPermanentlyDeniedInRegistered,
+          isPermanentlyDeniedInRegistered: slCheck.isPermanentlyDeniedInRegistered,
           status: slCheck.status,
-          explanation: isRegisteredTransfer ? 'Loss on transfer to registered account (TFSA/RRSP/FHSA) permanently denied under ITA s. 40(2)(g)(iv).' : slCheck.explanation,
+          explanation: slCheck.explanation,
         });
 
         // Add denied loss back to replacement ACB if in taxable account
-        if (!isRegisteredTransfer && !slCheck.isPermanentlyDeniedInRegistered && d(slCheck.deniedLossCad).isPositive()) {
+        if (!slCheck.isPermanentlyDeniedInRegistered && d(slCheck.deniedLossCad).isPositive()) {
           book.totalAcbCad = book.totalAcbCad.plus(d(slCheck.deniedLossCad));
           book.acbPerUnitCad = book.quantity.isPositive() ? book.totalAcbCad.dividedBy(book.quantity) : new Decimal(0);
 

@@ -177,6 +177,12 @@ export interface Transaction {
   linkedOptionTransactionId?: string;
   linkedShareTransactionId?: string;
   ibkrCode?: string; // e.g. 'A' (assigned), 'Ex' (exercised), 'Ep' (expired), 'Ca' (cancelled)
+
+  // Transfer details
+  targetAccountId?: string;
+  destinationAccountType?: Account['accountType'];
+  sourceAccountId?: string;
+  sourceAccountType?: Account['accountType'];
   
   // Exclude from tax
   isExcludedFromTax?: boolean;
@@ -311,16 +317,18 @@ export interface SecurityRollforward {
 
 export interface OpenPosition {
   accountId: string;
-  securityId: string;
+  securityId?: string;
   symbol: string;
   conid?: string;
   isin?: string;
   quantity: string;
-  costPrice: string;
-  currency: Currency;
-  markPrice: string;
-  positionValueCad: string;
-  asOfDate: string;
+  costPrice?: string;
+  costBasisCad?: string;
+  currency?: Currency;
+  markPrice?: string;
+  positionValueCad?: string;
+  asOfDate?: string;
+  reportDate?: string;
 }
 
 export interface ReconciliationBreak {

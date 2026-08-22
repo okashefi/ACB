@@ -114,10 +114,12 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
 
       let optionDetails;
       if (assetClass === 'OPT') {
+        const rightStr = (s.putCall || s.right || s.putOrCall || s.type || s.description || '').toUpperCase();
+        const isPut = rightStr.includes('PUT') || rightStr === 'P' || rightStr.endsWith(' P');
         optionDetails = {
           underlyingSymbol: s.underlyingSymbol || symbol.split(' ')[0] || symbol,
-          putOrCall: (s.putCall || (symbol.includes('P') ? 'PUT' : 'CALL')).toUpperCase() as 'PUT' | 'CALL',
-          strike: parseFloat(s.strike || '0').toString().toString(),
+          putOrCall: (isPut ? 'PUT' : 'CALL') as 'PUT' | 'CALL',
+          strike: parseFloat(s.strike || '0').toString(),
           expiryDate: s.expiry || s.maturity || '',
           multiplier: parseInt(s.multiplier || '100', 10),
           deliverable: s.deliverable,
@@ -388,22 +390,23 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
       const { amountCad, fxRate, fxSource } = convertToCad(grossAmount, currency, date, explicitFx);
       const { amountCad: commCad } = convertToCad(comm, currency, date, explicitFx);
 
-      const type = (opt.type || opt.transactionType || opt.action || opt.putCall || '').toUpperCase();
+      const rawType = (opt.type || opt.transactionType || opt.action || opt.putCall || opt.right || opt.assetCategory || opt.description || '').toUpperCase();
+      const isPut = rawType.includes('PUT') || rawType === 'P' || rawType.endsWith(' P');
       const code = opt.code || opt.notes || '';
       let txType: Transaction['transactionType'] = 'EXERCISE_LONG_CALL';
-      if (type.includes('ASSIGN') || code.includes('A')) {
-        txType = (type.includes('PUT') || symbol.includes('P')) ? 'ASSIGNED_SHORT_PUT' : 'ASSIGNED_SHORT_CALL';
+      if (rawType.includes('ASSIGN') || code.includes('A')) {
+        txType = isPut ? 'ASSIGNED_SHORT_PUT' : 'ASSIGNED_SHORT_CALL';
       } else {
-        txType = (type.includes('PUT') || symbol.includes('P')) ? 'EXERCISE_LONG_PUT' : 'EXERCISE_LONG_CALL';
+        txType = isPut ? 'EXERCISE_LONG_PUT' : 'EXERCISE_LONG_CALL';
       }
 
-      // Check if already present from Trades section (share tradeID or date+symbol+qty)
+      // Check if already present from Trades section (share tradeID or conid+date or date+symbol)
       const existingTradeIndex = transactions.findIndex((t) => {
         if (t.ibkrTransactionId && optId && t.ibkrTransactionId === optId) return true;
+        if (t.ibkrExecutionId && optId && t.ibkrExecutionId === optId) return true;
         if (t.id === `IBKR_TR_${optId}` || t.id === `IBKR_OPT_${optId}`) return true;
-        if (t.date === date && t.symbol === symbol) {
-          const tQty = Math.abs(parseFloat(t.quantity || '0'));
-          if (tQty === qty || tQty === qty * 100) return true;
+        if (t.date === date && (t.securityId === secId || t.symbol === symbol || t.symbol === opt.underlyingSymbol)) {
+          return true;
         }
         return false;
       });
@@ -411,7 +414,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
       if (existingTradeIndex >= 0) {
         // Update existing trade row with linked option exercise type and code
         const existing = transactions[existingTradeIndex];
-        existing.ibkrCode = existing.ibkrCode || code || type;
+        existing.ibkrCode = existing.ibkrCode || code || rawType;
         if (!existing.transactionType.includes('ASSIGNED') && !existing.transactionType.includes('EXERCISE')) {
           existing.transactionType = txType;
         }
@@ -436,7 +439,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
         amountCad: String(amountCad),
         commissionCad: String(commCad),
         totalOutlaysCad: String(commCad),
-        ibkrCode: code || type,
+        ibkrCode: code || rawType,
         ibkrTransactionId: optId,
         status: 'auto_approved',
         source: 'IBKR_FLEX_API',
@@ -460,11 +463,35 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
       const { amountCad, fxRate, fxSource } = convertToCad(grossAmount, currency, date, explicitFx);
 
       const dir = (xfer.direction || xfer.type || '').toUpperCase();
-      const txType: Transaction['transactionType'] = dir.includes('OUT') ? 'TRANSFER_OUT' : 'TRANSFER_IN';
+      const isOut = dir.includes('OUT') || parseFloat(xfer.quantity || '0') < 0;
+      const txType: Transaction['transactionType'] = isOut ? 'TRANSFER_OUT' : 'TRANSFER_IN';
+
+      const targetAcctId = xfer.targetAccount || xfer.targetAccountId || xfer.toAccount || xfer.fromAccount || '';
+      const targetAlias = (xfer.targetAccountAlias || xfer.targetAccountType || xfer.accountAlias || xfer.description || xfer.type || '').toUpperCase();
+
+      const categorizeType = (id: string, aliasStr: string): Account['accountType'] | undefined => {
+        if (id && accountsMap.has(id)) {
+          return accountsMap.get(id)!.accountType;
+        }
+        if (aliasStr.includes('TFSA')) return 'tfsa';
+        if (aliasStr.includes('RRSP') || aliasStr.includes('RSP')) return 'rrsp';
+        if (aliasStr.includes('FHSA')) return 'fhsa';
+        if (aliasStr.includes('RRIF')) return 'rrif';
+        if (aliasStr.includes('RESP')) return 'resp';
+        if (aliasStr.includes('LIRA') || aliasStr.includes('REGISTERED')) return 'other_registered';
+        if (aliasStr.includes('MARGIN') || aliasStr.includes('CASH') || aliasStr.includes('TAXABLE')) return 'taxable';
+        return undefined;
+      };
+
+      const otherAcctType = categorizeType(targetAcctId, targetAlias);
 
       transactions.push({
         id: `IBKR_XFER_${xferId}`,
         accountId: xfer.accountId || 'U_DEFAULT',
+        targetAccountId: isOut ? targetAcctId : undefined,
+        destinationAccountType: isOut ? otherAcctType : undefined,
+        sourceAccountId: !isOut ? targetAcctId : undefined,
+        sourceAccountType: !isOut ? otherAcctType : undefined,
         securityId: secId,
         symbol,
         date,
@@ -481,6 +508,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
         commissionCad: '0',
         totalOutlaysCad: '0',
         ibkrTransactionId: xferId,
+        reviewNotes: `${isOut ? 'Transfer OUT to' : 'Transfer IN from'} ${targetAcctId || 'other account'} (${otherAcctType?.toUpperCase() || 'UNKNOWN'})`,
         status: 'auto_approved',
         source: 'IBKR_FLEX_API',
       });

@@ -823,5 +823,138 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     });
   }
 
+  // 19. In-kind 100 shares ACB $20 to TFSA at FMV $15 -> $0 allowed loss, permanently denied
+  {
+    const start = performance.now();
+    const sec: SecurityMaster = { id: 'SEC_X1', symbol: 'XFER1', name: 'Transfer Co 1', assetClass: 'STK', currency: 'CAD' };
+    const txs: Transaction[] = [
+      {
+        id: 'X1_1', accountId: 'ACCT_TAXABLE', securityId: 'SEC_X1', symbol: 'XFER1', date: '2024-01-10',
+        transactionType: 'BUY', quantity: '100', price: '20', currency: 'CAD', commission: '0', totalGrossAmount: '2000',
+        totalNetAmount: '2000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '2000', commissionCad: '0', totalOutlaysCad: '0',
+        status: 'approved', source: 'TEST_FIXTURE',
+      },
+      {
+        id: 'X1_2', accountId: 'ACCT_TAXABLE', targetAccountId: 'ACCT_TFSA', destinationAccountType: 'tfsa', securityId: 'SEC_X1', symbol: 'XFER1', date: '2024-03-15',
+        transactionType: 'TRANSFER_OUT', quantity: '100', price: '15', currency: 'CAD', commission: '0', totalGrossAmount: '1500',
+        totalNetAmount: '1500', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '1500', commissionCad: '0', totalOutlaysCad: '0',
+        reviewNotes: 'In-kind transfer to TFSA', status: 'approved', source: 'TEST_FIXTURE',
+      },
+    ];
+
+    const out = runAcbEngine(txs, [taxableAcct, tfsaAcct], [sec]);
+    const balance = out.securityBalances.get('SEC_X1');
+    const rgl = out.realizedGainsLosses[0];
+
+    const passed = Number(balance?.quantity || 0) === 0 &&
+      Number(balance?.totalAcbCad || 0) === 0 &&
+      Number(rgl?.recognizedGainLossCad || 0) === 0 &&
+      Number(rgl?.superficialLossDeniedCad || 0) === 500;
+
+    results.push({
+      id: 'transfer-tfsa-loss-denied',
+      name: 'In-Kind Transfer to TFSA at Loss (ITA s. 40(2)(g)(iv))',
+      category: 'Transfers',
+      description: 'Transfer 100 shares ACB $20 ($2,000) to TFSA at FMV $15 ($1,500). Raw loss -$500 is 100% permanently denied ($0 allowed loss).',
+      statutoryCitations: ['ITA s. 40(2)(g)(iv)'],
+      passed,
+      expectedResult: 'Recognized Gain/Loss: $0.00 CAD, Denied Loss: $500.00 CAD, Remaining Taxable Qty: 0',
+      actualResult: `Recognized Gain/Loss: $${rgl?.recognizedGainLossCad} CAD, Denied Loss: $${rgl?.superficialLossDeniedCad} CAD, Remaining Taxable Qty: ${balance?.quantity || 0}`,
+      auditTrail: out.auditTrail,
+      executionTimeMs: performance.now() - start,
+    });
+  }
+
+  // 20. Same shares to TFSA at FMV $25 -> $500 gain
+  {
+    const start = performance.now();
+    const sec: SecurityMaster = { id: 'SEC_X2', symbol: 'XFER2', name: 'Transfer Co 2', assetClass: 'STK', currency: 'CAD' };
+    const txs: Transaction[] = [
+      {
+        id: 'X2_1', accountId: 'ACCT_TAXABLE', securityId: 'SEC_X2', symbol: 'XFER2', date: '2024-01-10',
+        transactionType: 'BUY', quantity: '100', price: '20', currency: 'CAD', commission: '0', totalGrossAmount: '2000',
+        totalNetAmount: '2000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '2000', commissionCad: '0', totalOutlaysCad: '0',
+        status: 'approved', source: 'TEST_FIXTURE',
+      },
+      {
+        id: 'X2_2', accountId: 'ACCT_TAXABLE', targetAccountId: 'ACCT_TFSA', destinationAccountType: 'tfsa', securityId: 'SEC_X2', symbol: 'XFER2', date: '2024-03-15',
+        transactionType: 'TRANSFER_OUT', quantity: '100', price: '25', currency: 'CAD', commission: '0', totalGrossAmount: '2500',
+        totalNetAmount: '2500', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '2500', commissionCad: '0', totalOutlaysCad: '0',
+        reviewNotes: 'In-kind transfer to TFSA', status: 'approved', source: 'TEST_FIXTURE',
+      },
+    ];
+
+    const out = runAcbEngine(txs, [taxableAcct, tfsaAcct], [sec]);
+    const balance = out.securityBalances.get('SEC_X2');
+    const rgl = out.realizedGainsLosses[0];
+
+    const passed = Number(balance?.quantity || 0) === 0 &&
+      Number(balance?.totalAcbCad || 0) === 0 &&
+      Number(rgl?.recognizedGainLossCad || 0) === 500;
+
+    results.push({
+      id: 'transfer-tfsa-gain-recognized',
+      name: 'In-Kind Transfer to TFSA at Gain (ITA s. 70(5) / s. 40(1))',
+      category: 'Transfers',
+      description: 'Transfer 100 shares ACB $20 ($2,000) to TFSA at FMV $25 ($2,500). $500 capital gain recognized in full.',
+      statutoryCitations: ['ITA s. 40(1)'],
+      passed,
+      expectedResult: 'Recognized Gain: $500.00 CAD, Remaining Taxable Qty: 0',
+      actualResult: `Recognized Gain: $${rgl?.recognizedGainLossCad} CAD, Remaining Taxable Qty: ${balance?.quantity || 0}`,
+      auditTrail: out.auditTrail,
+      executionTimeMs: performance.now() - start,
+    });
+  }
+
+  // 21. Taxable account A -> taxable account B, same taxpayer -> pool qty and ACB unchanged
+  {
+    const start = performance.now();
+    const sec: SecurityMaster = { id: 'SEC_X3', symbol: 'XFER3', name: 'Transfer Co 3', assetClass: 'STK', currency: 'CAD' };
+    const taxableAcctB: Account = {
+      id: 'ACCT_TAXABLE_B', accountId: 'U100101', name: 'IBKR Margin B', broker: 'IBKR', accountType: 'taxable', baseCurrency: 'CAD', isHouseholdAffiliate: false
+    };
+
+    const txs: Transaction[] = [
+      {
+        id: 'X3_1', accountId: 'ACCT_TAXABLE', securityId: 'SEC_X3', symbol: 'XFER3', date: '2024-01-10',
+        transactionType: 'BUY', quantity: '100', price: '20', currency: 'CAD', commission: '0', totalGrossAmount: '2000',
+        totalNetAmount: '2000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '2000', commissionCad: '0', totalOutlaysCad: '0',
+        status: 'approved', source: 'TEST_FIXTURE',
+      },
+      {
+        id: 'X3_2', accountId: 'ACCT_TAXABLE', targetAccountId: 'ACCT_TAXABLE_B', destinationAccountType: 'taxable', securityId: 'SEC_X3', symbol: 'XFER3', date: '2024-03-15',
+        transactionType: 'TRANSFER_OUT', quantity: '100', price: '22', currency: 'CAD', commission: '0', totalGrossAmount: '2200',
+        totalNetAmount: '2200', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '2200', commissionCad: '0', totalOutlaysCad: '0',
+        reviewNotes: 'Transfer to Margin B', status: 'approved', source: 'TEST_FIXTURE',
+      },
+      {
+        id: 'X3_3', accountId: 'ACCT_TAXABLE_B', sourceAccountId: 'ACCT_TAXABLE', sourceAccountType: 'taxable', securityId: 'SEC_X3', symbol: 'XFER3', date: '2024-03-15',
+        transactionType: 'TRANSFER_IN', quantity: '100', price: '22', currency: 'CAD', commission: '0', totalGrossAmount: '2200',
+        totalNetAmount: '2200', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '2200', commissionCad: '0', totalOutlaysCad: '0',
+        reviewNotes: 'Transfer from Margin A', status: 'approved', source: 'TEST_FIXTURE',
+      },
+    ];
+
+    const out = runAcbEngine(txs, [taxableAcct, taxableAcctB], [sec]);
+    const balance = out.securityBalances.get('SEC_X3');
+
+    const passed = Number(balance?.quantity || 0) === 100 &&
+      Number(balance?.totalAcbCad || 0) === 2000 &&
+      out.realizedGainsLosses.length === 0;
+
+    results.push({
+      id: 'transfer-taxable-to-taxable',
+      name: 'Taxable-to-Taxable Transfer (ITA s. 47 Unified Pool)',
+      category: 'Transfers',
+      description: 'Transfer 100 shares between Taxable A and Taxable B (same taxpayer). Pool quantity (100) and ACB ($2,000) remain unchanged with zero dispositions.',
+      statutoryCitations: ['ITA s. 47(1)'],
+      passed,
+      expectedResult: 'Pool Qty: 100, Pool ACB: $2,000.00 CAD, Realized Dispositions: 0',
+      actualResult: `Pool Qty: ${balance?.quantity || 0}, Pool ACB: $${balance?.totalAcbCad || 0} CAD, Realized Dispositions: ${out.realizedGainsLosses.length}`,
+      auditTrail: out.auditTrail,
+      executionTimeMs: performance.now() - start,
+    });
+  }
+
   return results;
 }

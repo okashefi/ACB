@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 
@@ -48,18 +49,56 @@ async function startServer() {
   // API 2: IBKR Flex Web Service Sync Proxy
   app.post('/api/ibkr/flex-sync', async (req, res) => {
     const { startDate, endDate } = req.body;
-    const token = process.env.IBKR_FLEX_TOKEN || req.body.token; // fallback if needed, but prefer env
+    // Token ONLY from environment variable (reject body.token)
+    const token = process.env.IBKR_FLEX_TOKEN;
     const queryId = process.env.IBKR_FLEX_QUERY_ID || req.body.queryId;
 
-    if (!token || !queryId) {
+    if (!token) {
       return res.status(400).json({
         success: false,
-        errorMessage: 'IBKR Flex Token and Query ID are required. Please configure them in settings.',
+        errorMessage: 'IBKR_FLEX_TOKEN environment variable is not configured on the server. Request rejected.',
       });
     }
 
+    if (!queryId) {
+      return res.status(400).json({
+        success: false,
+        errorMessage: 'IBKR Flex Query ID is required. Please configure IBKR_FLEX_QUERY_ID in settings.',
+      });
+    }
+
+    // Validate fd/td <= 365 days requirement
+    if (startDate && endDate) {
+      const parseDateString = (s: string): Date | null => {
+        if (!s) return null;
+        const clean = s.replace(/-/g, '');
+        if (clean.length === 8) {
+          const y = parseInt(clean.substring(0, 4), 10);
+          const m = parseInt(clean.substring(4, 6), 10) - 1;
+          const d = parseInt(clean.substring(6, 8), 10);
+          return new Date(Date.UTC(y, m, d));
+        }
+        return new Date(s);
+      };
+
+      const start = parseDateString(startDate);
+      const end = parseDateString(endDate);
+
+      if (start && end && !isNaN(start.getTime()) && !isNaN(end.getTime())) {
+        const diffMs = end.getTime() - start.getTime();
+        const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+        if (diffDays > 365) {
+          return res.status(400).json({
+            success: false,
+            errorCode: '1018',
+            errorMessage: 'Requested date range exceeds IBKR maximum allowed of 365 days (fd/td <= 365 days).',
+          });
+        }
+      }
+    }
+
     try {
-      // Step 1: SendRequest
+      // Step 1: SendRequest with mandatory User-Agent
       let sendRequestUrl = `https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/SendRequest?t=${encodeURIComponent(
         token
       )}&q=${encodeURIComponent(queryId)}&v=3`;
@@ -106,7 +145,7 @@ async function startServer() {
 
       const referenceCode = refCodeMatch[1];
 
-      // Step 2: Poll GetStatement with exponential backoff (2s, 4s, 8s, 15s)
+      // Step 2: Poll GetStatement with mandatory User-Agent
       const getStatementUrl = `https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/GetStatement?t=${encodeURIComponent(
         token
       )}&q=${encodeURIComponent(referenceCode)}&v=3`;
@@ -149,6 +188,17 @@ async function startServer() {
           success: false,
           errorMessage: 'IBKR Flex Statement took longer than expected to generate. Please retry in a few moments.',
         });
+      }
+
+      // Persist raw XML statement on server
+      try {
+        const dataDir = path.join(process.cwd(), 'data');
+        if (!fs.existsSync(dataDir)) {
+          fs.mkdirSync(dataDir, { recursive: true });
+        }
+        fs.writeFileSync(path.join(dataDir, 'last_flex_statement.xml'), statementXml, 'utf-8');
+      } catch (fileErr) {
+        console.error('Failed to persist raw Flex XML statement:', fileErr);
       }
 
       return res.json({
