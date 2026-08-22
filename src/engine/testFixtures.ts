@@ -272,9 +272,9 @@ export function runAllTestFixtures(): TestFixtureResult[] {
 
     const out = runAcbEngine(txs, [taxableAcct], [sec]);
     const balance = out.securityBalances.get('SEC_NVDA');
-    const rgl = out.realizedGainsLosses[0];
+    const sellRgl = out.realizedGainsLosses.find((r) => r.dispositionTransactionId === 'T5_3') || out.realizedGainsLosses[0];
 
-    const passed = Number(balance?.quantity) === 150 && Number(balance?.totalAcbCad) === 3750 && Number(rgl?.recognizedGainLossCad) === 250;
+    const passed = Number(balance?.quantity) === 150 && Number(balance?.totalAcbCad) === 3750 && Number(sellRgl?.recognizedGainLossCad) === 250;
 
     results.push({
       id: 'TEST_5',
@@ -284,7 +284,7 @@ export function runAllTestFixtures(): TestFixtureResult[] {
       statutoryCitations: ['ITA s. 47(1)'],
       passed,
       expectedResult: 'Remaining Qty: 150, Remaining ACB: $3,750.00 CAD ($25.00/unit), Realized Gain: $250.00 CAD',
-      actualResult: `Remaining Qty: ${balance?.quantity}, Remaining ACB: $${balance?.totalAcbCad} CAD ($${balance?.acbPerUnitCad}/unit), Realized Gain: $${rgl?.recognizedGainLossCad} CAD`,
+      actualResult: `Remaining Qty: ${balance?.quantity}, Remaining ACB: $${balance?.totalAcbCad} CAD ($${balance?.acbPerUnitCad}/unit), Realized Gain: $${sellRgl?.recognizedGainLossCad} CAD`,
       auditTrail: out.auditTrail,
       executionTimeMs: performance.now() - start,
     });

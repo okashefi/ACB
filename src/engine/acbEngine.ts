@@ -209,28 +209,39 @@ export function runAcbEngine(
       const divInc = d(caResult.dividendIncomeCad);
       const rocInc = d(caResult.returnOfCapitalCad);
 
+      const priorPerUnitAcb = book.acbPerUnitCad;
+
       // Apply old shares removal
-      if (oldSharesDisposed.isPositive()) {
+      if (oldSharesDisposed.greaterThan(0)) {
         book.quantity = Decimal.max(0, book.quantity.minus(oldSharesDisposed));
         book.totalAcbCad = Decimal.max(0, book.totalAcbCad.minus(oldAcbRemoved));
-        book.acbPerUnitCad = book.quantity.isPositive() ? book.totalAcbCad.dividedBy(book.quantity) : new Decimal(0);
+        book.acbPerUnitCad = book.quantity.greaterThan(0) ? book.totalAcbCad.dividedBy(book.quantity) : new Decimal(0);
       }
 
       // Apply new shares addition (if same or different security)
       const targetSecId = tx.corporateAction.newSecurityId || tx.securityId;
       const targetBook = getBook(targetSecId, tx.symbol);
 
-      if (newSharesQty.isPositive()) {
+      if (newSharesQty.greaterThan(0)) {
         targetBook.quantity = targetBook.quantity.plus(newSharesQty);
         targetBook.totalAcbCad = targetBook.totalAcbCad.plus(newSharesTotalAcb);
-        targetBook.acbPerUnitCad = targetBook.quantity.isPositive()
+        targetBook.acbPerUnitCad = targetBook.quantity.greaterThan(0)
           ? targetBook.totalAcbCad.dividedBy(targetBook.quantity)
           : new Decimal(0);
       }
 
-      // Record capital gains / losses if recognized
-      if (realizedGain.isPositive() || realizedLoss.isPositive()) {
-        const netGainLoss = realizedGain.isPositive() ? realizedGain : realizedLoss.negated();
+      // Record capital gains / losses if recognized or if event is a real taxable disposition
+      const isTaxableDispositionCa =
+        tx.corporateAction.treatment === 'FULL_CASH_DISPOSITION' ||
+        tx.corporateAction.treatment === 'FOREIGN_SHARE_EXCHANGE_TAXABLE' ||
+        tx.corporateAction.treatment === 'MIXED_CAPITAL_BOOT_TAXABLE';
+
+      const hasRecognizedGainOrLoss = realizedGain.greaterThan(0) || realizedLoss.greaterThan(0);
+
+      if (hasRecognizedGainOrLoss || isTaxableDispositionCa) {
+        const netGainLoss = realizedGain.greaterThan(0)
+          ? realizedGain
+          : (realizedLoss.greaterThan(0) ? realizedLoss.negated() : new Decimal(0));
 
         realizedGainsLosses.push({
           id: `RGL_${tx.id}`,
@@ -244,7 +255,7 @@ export function runAcbEngine(
           grossProceedsCad: toMoney(proceeds),
           dispositionOutlaysCad: toMoney(0),
           netProceedsCad: toMoney(proceeds),
-          acbPerUnitPriorCad: toMoney(book.acbPerUnitCad),
+          acbPerUnitPriorCad: toMoney(priorPerUnitAcb),
           acbOfUnitsDisposedCad: toMoney(oldAcbRemoved),
           rawGainLossCad: toMoney(netGainLoss),
           isSuperficialLoss: false,
@@ -279,7 +290,7 @@ export function runAcbEngine(
         costChangeCad: toMoney(newSharesTotalAcb.minus(oldAcbRemoved)),
         runningTotalAcbCad: toMoney(targetBook.totalAcbCad),
         runningAcbPerUnitCad: toMoney(targetBook.acbPerUnitCad),
-        realizedGainLossCad: realizedGain.isPositive() ? toMoney(realizedGain) : (realizedLoss.isPositive() ? toMoney(realizedLoss.negated()) : undefined),
+        realizedGainLossCad: realizedGain.greaterThan(0) ? toMoney(realizedGain) : (realizedLoss.greaterThan(0) ? toMoney(realizedLoss.negated()) : undefined),
         originalCurrency: tx.currency,
         fxRateUsed: toRate(d(tx.fxRate || 1)),
         fxRateSource: tx.fxRateSource,
