@@ -12,6 +12,7 @@ import {
   TestTube2,
   PlusCircle,
   UploadCloud,
+  Settings,
 } from 'lucide-react';
 import { FlexConnectorConfig } from '../types/tax';
 
@@ -23,6 +24,7 @@ export type ActiveTab =
   | 'reports'
   | 'securities'
   | 'accounts'
+  | 'settings'
   | 'tests'
   | 'help';
 
@@ -60,7 +62,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           
           {/* Logo & Title */}
           <div className="flex items-center gap-3 cursor-pointer select-none" onClick={() => setActiveTab('dashboard')}>
-            <div className="w-8 h-8 rounded-lg bg-[#3B82F6] flex items-center justify-center text-white font-bold shadow-xs">
+            <div className="w-8 h-8 rounded-lg bg-[#2563EB] flex items-center justify-center text-white font-bold shadow-xs">
               <Layers className="w-4 h-4" />
             </div>
             <div>
@@ -88,6 +90,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               { id: 'connector', label: 'IBKR Sync', icon: Database },
               { id: 'reports', label: 'Tax Reports', icon: FileSpreadsheet },
               { id: 'accounts', label: 'Accounts', icon: Building2 },
+              { id: 'settings', label: 'Settings', icon: Settings },
               { id: 'help', label: 'Help & Guide', icon: HelpCircle },
               { id: 'tests', label: 'Test Suite', icon: TestTube2 },
             ].map((tab) => {
@@ -104,7 +107,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                       : 'text-[#71717A] hover:bg-[#F4F4F5] hover:text-[#18181B]'
                   }`}
                 >
-                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-[#3B82F6]' : 'text-[#71717A]'}`} />
+                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-[#2563EB]' : 'text-[#71717A]'}`} />
                   <span>{tab.label}</span>
                   {tab.badge !== undefined && (
                     <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A]">
@@ -126,7 +129,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 id="tax-year-selector"
                 value={selectedTaxYear}
                 onChange={(e) => setSelectedTaxYear(e.target.value === 'ALL' ? 'ALL' : parseInt(e.target.value, 10))}
-                className="bg-white text-[#18181B] text-xs font-medium rounded-lg px-2 py-1 border border-[#E4E4E7] focus:outline-none focus:border-[#3B82F6] cursor-pointer shadow-2xs"
+                className="bg-white text-[#18181B] text-xs font-medium rounded-lg px-2 py-1 border border-[#E4E4E7] focus:outline-none focus:border-[#3B82F6] cursor-pointer shadow-2xs font-mono"
               >
                 <option value="ALL">All History</option>
                 {availableTaxYears.map((yr) => (
@@ -144,7 +147,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               className="hidden sm:flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-[#F4F4F5] text-[#18181B] text-xs font-medium rounded-xl border border-[#E4E4E7] transition-colors shadow-2xs"
               title="Add manual transaction or corporate action"
             >
-              <PlusCircle className="w-3.5 h-3.5 text-[#3B82F6]" />
+              <PlusCircle className="w-3.5 h-3.5 text-[#2563EB]" />
               <span>Add Entry</span>
             </button>
 
@@ -163,7 +166,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               id="btn-sync-ibkr"
               onClick={onTriggerSync}
               disabled={isSyncing}
-              className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-xl text-white shadow-xs transition-colors ${
+              className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl text-white shadow-xs transition-colors ${
                 isSyncing
                   ? 'bg-zinc-700 cursor-wait'
                   : 'bg-[#18181B] hover:bg-black'
@@ -184,6 +187,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             { id: 'connector', label: 'IBKR', icon: Database },
             { id: 'reports', label: 'Reports', icon: FileSpreadsheet },
             { id: 'accounts', label: 'Accounts', icon: Building2 },
+            { id: 'settings', label: 'Settings', icon: Settings },
             { id: 'help', label: 'Help', icon: HelpCircle },
             { id: 'tests', label: 'Tests', icon: TestTube2 },
           ].map((tab) => (

@@ -287,7 +287,7 @@ export function runAcbEngine(
         runningAcbPerUnitCad: toMoney(targetBook.acbPerUnitCad),
         realizedGainLossCad: caResult.realizedCapitalGainCad || -caResult.realizedCapitalLossCad || undefined,
         originalCurrency: tx.currency,
-        fxRateUsed: tx.fxRate || 1,
+        fxRateUsed: d(tx.fxRate || 1).toNumber(),
         fxRateSource: tx.fxRateSource,
         statutoryRule: caResult.statutoryBasis,
         notes: caResult.explanation,
@@ -306,12 +306,12 @@ export function runAcbEngine(
       tx.transactionType.startsWith('ASSIGNED_') ||
       tx.transactionType.startsWith('OPT_EXPIRY_')
     ) {
-      const optDetails = sec?.optionDetails || {
-        underlyingSymbol: tx.symbol.split(' ')[0] || tx.symbol,
-        putOrCall: tx.transactionType.includes('PUT') ? 'PUT' : 'CALL',
-        strike: tx.price || 100,
-        expiryDate: tx.date,
-        multiplier: 100,
+      const optDetails = {
+        underlyingSymbol: sec?.optionDetails?.underlyingSymbol || tx.symbol.split(' ')[0] || tx.symbol,
+        putOrCall: (sec?.optionDetails?.putOrCall || (tx.transactionType.includes('PUT') ? 'PUT' : 'CALL')) as 'PUT' | 'CALL',
+        strike: d(sec?.optionDetails?.strike ?? tx.price ?? 100).toNumber(),
+        expiryDate: sec?.optionDetails?.expiryDate || tx.date,
+        multiplier: d(sec?.optionDetails?.multiplier ?? 100).toNumber(),
       };
 
       const seriesKey = getOptionSeriesKey(
@@ -416,12 +416,12 @@ export function runAcbEngine(
           symbol: tx.symbol,
           securityName: `Option: ${seriesKey}`,
           assetClass: 'OPT',
-          quantityDisposed: tx.quantity,
+          quantityDisposed: toShares(tx.quantity),
           grossProceedsCad: toMoney(d(tx.amountCad)),
           dispositionOutlaysCad: toMoney(tx.commissionCad),
           netProceedsCad: toMoney(d(tx.amountCad).minus(d(tx.commissionCad))),
           acbPerUnitPriorCad: toMoney(optState.longAcbPerContractCad || optState.unearnedPremiumPerContractCad),
-          acbOfUnitsDisposedCad: toMoney(d(optState.longAcbPerContractCad).times(tx.quantity)),
+          acbOfUnitsDisposedCad: toMoney(d(optState.longAcbPerContractCad).times(d(tx.quantity))),
           rawGainLossCad: effect.optionGainLossCad,
           isSuperficialLoss: false,
           superficialLossDeniedCad: 0,
@@ -441,14 +441,14 @@ export function runAcbEngine(
         transactionId: tx.id,
         transactionType: tx.transactionType,
         description: effect.optionExplanation,
-        quantityChange: effect.shareDeltaQty || (tx.transactionType.includes('BUY') ? tx.quantity : -tx.quantity),
+        quantityChange: effect.shareDeltaQty || (tx.transactionType.includes('BUY') ? toShares(tx.quantity) : -toShares(tx.quantity)),
         runningQuantity: toShares(book.quantity),
         costChangeCad: effect.shareCostCad || (tx.transactionType.includes('BUY') ? toMoney(d(tx.amountCad)) : 0),
         runningTotalAcbCad: toMoney(book.totalAcbCad),
         runningAcbPerUnitCad: toMoney(book.acbPerUnitCad),
         realizedGainLossCad: effect.optionGainLossCad || undefined,
         originalCurrency: tx.currency,
-        fxRateUsed: tx.fxRate || 1,
+        fxRateUsed: d(tx.fxRate || 1).toNumber(),
         fxRateSource: tx.fxRateSource,
         statutoryRule: effect.statutoryBasis,
         notes: effect.optionExplanation,
@@ -494,7 +494,7 @@ export function runAcbEngine(
         runningTotalAcbCad: toMoney(book.totalAcbCad),
         runningAcbPerUnitCad: toMoney(book.acbPerUnitCad),
         originalCurrency: tx.currency,
-        fxRateUsed: tx.fxRate || 1,
+        fxRateUsed: d(tx.fxRate || 1).toNumber(),
         fxRateSource: tx.fxRateSource,
         statutoryRule: 'ITA s. 47(1) Average Cost Pool Recomputation',
       });
@@ -624,7 +624,7 @@ export function runAcbEngine(
         realizedGainLossCad: toMoney(finalRecognizedGainLoss),
         superficialLossAdjustmentCad: slCheck.deniedLossCad || undefined,
         originalCurrency: tx.currency,
-        fxRateUsed: tx.fxRate || 1,
+        fxRateUsed: d(tx.fxRate || 1).toNumber(),
         fxRateSource: tx.fxRateSource,
         statutoryRule: 'ITA s. 40(1)(a) Capital Gain/Loss Disposition',
         notes: slCheck.explanation,
@@ -698,7 +698,7 @@ export function runAcbEngine(
         runningAcbPerUnitCad: toMoney(book.acbPerUnitCad),
         realizedGainLossCad: excessGain.isPositive() ? toMoney(excessGain) : undefined,
         originalCurrency: tx.currency,
-        fxRateUsed: tx.fxRate || 1,
+        fxRateUsed: d(tx.fxRate || 1).toNumber(),
         fxRateSource: tx.fxRateSource,
         statutoryRule: 'ITA s. 53(2)(a) & s. 40(3) ROC Reduction',
       });

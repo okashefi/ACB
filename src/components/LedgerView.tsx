@@ -14,8 +14,11 @@ import {
   HelpCircle,
   ChevronRight,
   Sparkles,
+  Link as LinkIcon,
+  ExternalLink,
+  ShieldCheck,
 } from 'lucide-react';
-import { CalculationEngineOutput, AcbLedgerEntry, SecurityMaster } from '../types/tax';
+import { CalculationEngineOutput, AcbLedgerEntry, SecurityMaster, Transaction } from '../types/tax';
 import { formatCad, formatShares, formatRate } from '../engine/decimal';
 
 interface LedgerViewProps {
@@ -61,15 +64,17 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
         if (selectedType === 'SELLS' && !entry.transactionType.includes('SELL') && entry.transactionType !== 'TRANSFER_OUT') return false;
         if (selectedType === 'CA' && !entry.transactionType.includes('SPLIT') && !entry.transactionType.includes('MERGER') && !entry.transactionType.includes('SPINOFF')) return false;
         if (selectedType === 'ROC' && entry.transactionType !== 'RETURN_OF_CAPITAL') return false;
+        if (selectedType === 'OPTIONS' && !entry.transactionType.includes('OPT') && !entry.transactionType.includes('EXERCISE') && !entry.transactionType.includes('ASSIGNED')) return false;
       }
 
-      // Search query (symbol or description)
+      // Search query (symbol, description, ID, or statutory rule)
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchesSym = entry.symbol.toLowerCase().includes(q);
         const matchesDesc = entry.description.toLowerCase().includes(q);
         const matchesRule = entry.statutoryRule.toLowerCase().includes(q);
-        if (!matchesSym && !matchesDesc && !matchesRule) return false;
+        const matchesId = entry.transactionId.toLowerCase().includes(q);
+        if (!matchesSym && !matchesDesc && !matchesRule && !matchesId) return false;
       }
 
       return true;
@@ -81,8 +86,25 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
 
   // Export Ledger to CSV
   const handleExportCsv = () => {
-    const headers = ['Date', 'Symbol', 'Type', 'Description', 'Qty Change', 'Running Qty', 'Cost Change (CAD)', 'Running Total ACB (CAD)', 'Running ACB/Unit (CAD)', 'Realized Gain/Loss (CAD)', 'FX Rate', 'FX Source', 'Statutory Rule'];
+    const headers = [
+      'Transaction ID',
+      'Date',
+      'Symbol',
+      'Event Type',
+      'Description',
+      'Qty Change',
+      'Running Qty',
+      'Cost Change (CAD)',
+      'Running Total ACB (CAD)',
+      'Running ACB/Unit (CAD)',
+      'Realized Gain/Loss (CAD)',
+      'FX Rate Used',
+      'FX Source',
+      'Statutory Rule',
+      'CPA Notes',
+    ];
     const rows = filteredEntries.map((e) => [
+      e.transactionId,
       e.date,
       e.symbol,
       e.transactionType,
@@ -96,9 +118,16 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
       e.fxRateUsed,
       e.fxRateSource,
       `"${e.statutoryRule.replace(/"/g, '""')}"`,
+      `"${(e.notes || '').replace(/"/g, '""')}"`,
     ]);
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const csvContent = 'data:text/csv;charset=utf-8,' + [
+      '# CANADIAN ADJUSTED COST BASE (ACB) TRANSACTION LEDGER',
+      '# Prepared in accordance with the Income Tax Act (Canada) ITA s. 47(1) average cost pooling',
+      headers.join(','),
+      ...rows.map((r) => r.join(',')),
+    ].join('\n');
+
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
@@ -119,7 +148,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             <span>Adjusted Cost Base (ACB) Transaction Ledger</span>
           </h2>
           <p className="text-xs text-[#71717A] mt-0.5">
-            Audit-ready running average cost pools under <strong>ITA s. 47(1)</strong> with Bank of Canada FX conversions.
+            Audit-ready running identical property cost pools under <strong>ITA s. 47(1)</strong> with Bank of Canada FX conversions.
           </p>
         </div>
 
@@ -151,7 +180,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
 
           <div className="flex items-center gap-4 text-right font-mono">
             <div>
-              <div className="text-[10px] text-[#71717A] uppercase font-sans font-semibold">Total Pool ACB</div>
+              <div className="text-[10px] text-[#71717A] uppercase font-sans font-semibold">Total Pool Adjusted Cost Base</div>
               <div className="text-base font-bold text-[#059669]">{formatCad(activeSecurityBalance.totalAcbCad)}</div>
             </div>
             <div className="border-l border-[#E4E4E7] pl-4">
@@ -166,12 +195,12 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
       <div className="bg-white border border-[#E4E4E7] rounded-2xl p-4 shadow-2xs flex flex-col md:flex-row items-center justify-between gap-3">
         
         {/* Search */}
-        <div className="relative w-full md:w-72">
+        <div className="relative w-full md:w-80">
           <Search className="w-4 h-4 text-[#A1A1AA] absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             id="input-ledger-search"
             type="text"
-            placeholder="Search symbol, note, rule..."
+            placeholder="Search tx ID, symbol, note, rule..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-[#F9FAFB] text-[#18181B] text-xs rounded-xl pl-9 pr-3 py-2 border border-[#E4E4E7] focus:outline-none focus:border-[#3B82F6] focus:bg-white placeholder-[#A1A1AA] transition-colors"
@@ -204,8 +233,9 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             <option value="ALL">All Transactions</option>
             <option value="BUYS">Acquisitions (Buys/DRIPs)</option>
             <option value="SELLS">Dispositions (Sells)</option>
+            <option value="OPTIONS">Options & Exercises (ITA s. 49)</option>
             <option value="CA">Corporate Actions</option>
-            <option value="ROC">Return of Capital</option>
+            <option value="ROC">Return of Capital (ITA s. 53)</option>
           </select>
         </div>
 
@@ -214,23 +244,23 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
         </div>
       </div>
 
-      {/* Hero Table */}
+      {/* Main Ledger Table */}
       <div className="bg-white border border-[#E4E4E7] rounded-2xl overflow-hidden shadow-2xs">
         <div className="overflow-x-auto">
           <table id="main-acb-ledger-table" className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-[#F4F4F5] border-b border-[#E4E4E7] text-[#71717A] uppercase tracking-wider text-[10px] font-mono">
-                <th className="py-3 px-3.5 font-semibold">Date</th>
-                <th className="py-3 px-3.5 font-semibold">Security</th>
-                <th className="py-3 px-3.5 font-semibold">Event</th>
-                <th className="py-3 px-3.5 font-semibold text-right">Qty Delta</th>
-                <th className="py-3 px-3.5 font-semibold text-right">Running Qty</th>
-                <th className="py-3 px-3.5 font-semibold text-right">Cost Delta (CAD)</th>
-                <th className="py-3 px-3.5 font-semibold text-right">Running ACB (CAD)</th>
-                <th className="py-3 px-3.5 font-semibold text-right">ACB / Unit (CAD)</th>
-                <th className="py-3 px-3.5 font-semibold text-right">Gain / Loss</th>
-                <th className="py-3 px-3.5 font-semibold text-center">FX Rate</th>
-                <th className="py-3 px-3.5 font-semibold text-center">Details</th>
+                <th className="py-3 px-3 font-semibold">Tx ID / Date</th>
+                <th className="py-3 px-3 font-semibold">Security</th>
+                <th className="py-3 px-3 font-semibold">Event & Linked Trades</th>
+                <th className="py-3 px-3 font-semibold text-right">Qty Delta</th>
+                <th className="py-3 px-3 font-semibold text-right">Running Qty</th>
+                <th className="py-3 px-3 font-semibold text-right">Cost Delta (CAD)</th>
+                <th className="py-3 px-3 font-semibold text-right">Running ACB (CAD)</th>
+                <th className="py-3 px-3 font-semibold text-right">ACB / Unit (CAD)</th>
+                <th className="py-3 px-3 font-semibold text-right">Gain / Loss</th>
+                <th className="py-3 px-3 font-semibold text-center">Statutory Rule</th>
+                <th className="py-3 px-3 font-semibold text-center">Audit</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E4E4E7] font-mono">
@@ -238,7 +268,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                 const isBuy = entry.quantityChange > 0;
                 const isSell = entry.quantityChange < 0;
                 const hasGain = entry.realizedGainLossCad !== undefined && entry.realizedGainLossCad >= 0;
-                const hasLoss = entry.realizedGainLossCad !== undefined && entry.realizedGainLossCad < 0;
+                const isOptionLinked = entry.transactionType.includes('OPT') || entry.transactionType.includes('EXERCISE') || entry.transactionType.includes('ASSIGNED');
 
                 return (
                   <tr
@@ -246,55 +276,66 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                     onClick={() => setActiveEntryDetails(entry)}
                     className="hover:bg-[#F9FAFB] cursor-pointer transition-colors"
                   >
-                    {/* Date */}
-                    <td className="py-3 px-3.5 text-[#18181B] whitespace-nowrap">{entry.date}</td>
+                    {/* Date & ID */}
+                    <td className="py-3 px-3 whitespace-nowrap">
+                      <div className="text-[#18181B] font-medium">{entry.date}</div>
+                      <div className="text-[9px] text-[#A1A1AA] font-mono">{entry.transactionId}</div>
+                    </td>
 
                     {/* Symbol */}
-                    <td className="py-3 px-3.5 font-bold text-[#18181B]">{entry.symbol}</td>
+                    <td className="py-3 px-3 font-bold text-[#18181B]">{entry.symbol}</td>
 
-                    {/* Event badge & Description */}
-                    <td className="py-3 px-3.5">
-                      <div className="flex items-center gap-1.5">
-                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${
-                          isBuy ? 'bg-[#ECFDF5] text-[#059669] border border-[#A7F3D0]'
-                          : isSell ? 'bg-[#FEF2F2] text-[#DC2626] border border-[#FECACA]'
-                          : 'bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE]'
-                        }`}>
-                          {entry.transactionType}
-                        </span>
-                        <span className="text-[11px] text-[#71717A] font-sans truncate max-w-[200px]" title={entry.description}>
+                    {/* Event badge & Linked trade / description */}
+                    <td className="py-3 px-3">
+                      <div className="flex flex-col gap-1 max-w-[220px]">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${
+                            isBuy ? 'bg-[#ECFDF5] text-[#059669] border border-[#A7F3D0]'
+                            : isSell ? 'bg-[#FEF2F2] text-[#DC2626] border border-[#FECACA]'
+                            : 'bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE]'
+                          }`}>
+                            {entry.transactionType}
+                          </span>
+                          {isOptionLinked && (
+                            <span className="px-1.5 py-0.5 rounded bg-[#F5F3FF] text-[#7C3AED] text-[9px] border border-[#DDD6FE] flex items-center gap-0.5">
+                              <LinkIcon className="w-2.5 h-2.5" />
+                              <span>s. 49 Link</span>
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[11px] text-[#71717A] font-sans truncate" title={entry.description}>
                           {entry.description}
                         </span>
                       </div>
                     </td>
 
                     {/* Qty Delta */}
-                    <td className={`py-3 px-3.5 text-right font-medium ${isBuy ? 'text-[#059669]' : isSell ? 'text-[#DC2626]' : 'text-[#71717A]'}`}>
+                    <td className={`py-3 px-3 text-right font-medium ${isBuy ? 'text-[#059669]' : isSell ? 'text-[#DC2626]' : 'text-[#71717A]'}`}>
                       {entry.quantityChange > 0 ? `+${formatShares(entry.quantityChange)}` : formatShares(entry.quantityChange)}
                     </td>
 
                     {/* Running Qty */}
-                    <td className="py-3 px-3.5 text-right font-semibold text-[#18181B]">
+                    <td className="py-3 px-3 text-right font-semibold text-[#18181B]">
                       {formatShares(entry.runningQuantity)}
                     </td>
 
                     {/* Cost Delta CAD */}
-                    <td className={`py-3 px-3.5 text-right ${entry.costChangeCad >= 0 ? 'text-[#059669]' : 'text-[#71717A]'}`}>
+                    <td className={`py-3 px-3 text-right ${entry.costChangeCad >= 0 ? 'text-[#059669]' : 'text-[#71717A]'}`}>
                       {entry.costChangeCad >= 0 ? `+${formatCad(entry.costChangeCad)}` : formatCad(entry.costChangeCad)}
                     </td>
 
                     {/* Running Total ACB CAD */}
-                    <td className="py-3 px-3.5 text-right font-bold text-[#059669]">
+                    <td className="py-3 px-3 text-right font-bold text-[#059669]">
                       {formatCad(entry.runningTotalAcbCad)}
                     </td>
 
                     {/* Running ACB Per Unit CAD */}
-                    <td className="py-3 px-3.5 text-right text-[#18181B]">
+                    <td className="py-3 px-3 text-right text-[#18181B]">
                       {formatCad(entry.runningAcbPerUnitCad)}
                     </td>
 
                     {/* Realized Capital Gain / Loss */}
-                    <td className="py-3 px-3.5 text-right">
+                    <td className="py-3 px-3 text-right">
                       {entry.realizedGainLossCad !== undefined ? (
                         <span className={`font-bold ${hasGain ? 'text-[#059669]' : 'text-[#DC2626]'}`}>
                           {hasGain ? `+${formatCad(entry.realizedGainLossCad)}` : formatCad(entry.realizedGainLossCad)}
@@ -304,14 +345,15 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                       )}
                     </td>
 
-                    {/* FX Rate */}
-                    <td className="py-3 px-3.5 text-center text-[10px] text-[#71717A]">
-                      <div>{formatRate(entry.fxRateUsed)}</div>
-                      <div className="text-[9px] text-[#A1A1AA] font-sans">{entry.originalCurrency}</div>
+                    {/* Statutory Rule */}
+                    <td className="py-3 px-3 text-center">
+                      <span className="px-2 py-0.5 rounded-md bg-[#EFF6FF] text-[#2563EB] text-[10px] border border-[#BFDBFE] inline-block truncate max-w-[120px]" title={entry.statutoryRule}>
+                        {entry.statutoryRule.split(' ')[1] || entry.statutoryRule}
+                      </span>
                     </td>
 
-                    {/* Details icon */}
-                    <td className="py-3 px-3.5 text-center text-[#A1A1AA] hover:text-[#2563EB]">
+                    {/* Audit Link icon */}
+                    <td className="py-3 px-3 text-center text-[#A1A1AA] hover:text-[#2563EB]">
                       <ChevronRight className="w-4 h-4 inline" />
                     </td>
                   </tr>
@@ -330,14 +372,14 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
         </div>
       </div>
 
-      {/* Audit Detail Drawer Modal if entry clicked */}
+      {/* Audit Detail Modal */}
       {activeEntryDetails && (
         <div className="fixed inset-0 z-50 bg-[#18181B]/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white border border-[#E4E4E7] rounded-2xl max-w-lg w-full p-6 shadow-xl space-y-4 text-[#18181B] animate-in fade-in zoom-in-95">
             <div className="flex items-center justify-between border-b border-[#E4E4E7] pb-3">
               <div className="flex items-center gap-2">
-                <FileSpreadsheet className="w-5 h-5 text-[#2563EB]" />
-                <h3 className="font-bold text-sm text-[#18181B]">Ledger Event Audit Details</h3>
+                <ShieldCheck className="w-5 h-5 text-[#2563EB]" />
+                <h3 className="font-bold text-sm text-[#18181B]">CRA Audit Provenance & Calculation Trail</h3>
               </div>
               <button
                 onClick={() => setActiveEntryDetails(null)}
@@ -350,29 +392,46 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
             <div className="space-y-3 text-xs font-mono">
               <div className="grid grid-cols-2 gap-2 bg-[#F9FAFB] p-3.5 rounded-xl border border-[#E4E4E7]">
                 <div>
+                  <span className="text-[#71717A] font-sans">Transaction ID:</span> <span className="font-bold">{activeEntryDetails.transactionId}</span>
+                </div>
+                <div>
                   <span className="text-[#71717A] font-sans">Date:</span> {activeEntryDetails.date}
                 </div>
                 <div>
-                  <span className="text-[#71717A] font-sans">Symbol:</span> <strong>{activeEntryDetails.symbol}</strong>
+                  <span className="text-[#71717A] font-sans">Security:</span> <strong>{activeEntryDetails.symbol}</strong>
                 </div>
                 <div>
-                  <span className="text-[#71717A] font-sans">Event:</span> {activeEntryDetails.transactionType}
+                  <span className="text-[#71717A] font-sans">Event Type:</span> {activeEntryDetails.transactionType}
                 </div>
-                <div>
-                  <span className="text-[#71717A] font-sans">Statutory Basis:</span> <span className="text-[#2563EB] font-semibold">{activeEntryDetails.statutoryRule}</span>
+                <div className="col-span-2 pt-1 border-t border-[#E4E4E7]">
+                  <span className="text-[#71717A] font-sans">Governing Statutory Rule:</span>{' '}
+                  <span className="text-[#2563EB] font-semibold">{activeEntryDetails.statutoryRule}</span>
                 </div>
               </div>
 
-              <div className="space-y-1.5 font-sans text-[#18181B]">
-                <div className="font-semibold text-xs text-[#18181B]">Description:</div>
+              {/* Option Exercise Linking Banner */}
+              {(activeEntryDetails.transactionType.includes('EXERCISE') || activeEntryDetails.transactionType.includes('ASSIGNED') || activeEntryDetails.description.includes('Option')) && (
+                <div className="p-3 bg-[#F5F3FF] border border-[#DDD6FE] rounded-xl space-y-1 text-[#5B21B6] font-sans">
+                  <div className="font-bold text-xs flex items-center gap-1.5">
+                    <LinkIcon className="w-3.5 h-3.5 text-[#7C3AED]" />
+                    <span>Linked Option Contract Integration (ITA s. 49(3) / 49(4))</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed">
+                    Under ITA s. 49(3)/49(4), the option premium ($CAD) was directly rolled into the acquired shares adjusted cost base or disposition proceeds of the underlying share trade.
+                  </p>
+                </div>
+              )}
+
+              <div className="space-y-1 font-sans text-[#18181B]">
+                <div className="font-semibold text-xs">Full Event Description:</div>
                 <p className="bg-[#F9FAFB] p-3 rounded-xl border border-[#E4E4E7] text-[11px] text-[#71717A] leading-relaxed">
                   {activeEntryDetails.description}
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 pt-2 font-mono">
+              <div className="grid grid-cols-2 gap-3 pt-1 font-mono">
                 <div className="p-3 rounded-xl bg-[#F4F4F5] border border-[#E4E4E7]">
-                  <div className="text-[10px] text-[#71717A] font-sans">Resulting Total ACB</div>
+                  <div className="text-[10px] text-[#71717A] font-sans">Resulting Pool Total ACB</div>
                   <div className="text-sm font-bold text-[#059669]">{formatCad(activeEntryDetails.runningTotalAcbCad)}</div>
                 </div>
                 <div className="p-3 rounded-xl bg-[#F4F4F5] border border-[#E4E4E7]">
@@ -381,9 +440,14 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-2 bg-[#F9FAFB] p-2.5 rounded-xl border border-[#E4E4E7] text-[11px]">
+                <div>FX Rate Used: <strong>{formatRate(activeEntryDetails.fxRateUsed)}</strong></div>
+                <div>FX Source: <strong>{activeEntryDetails.fxRateSource}</strong></div>
+              </div>
+
               {activeEntryDetails.notes && (
                 <div className="font-sans text-[11px] text-[#92400E] bg-[#FFFBEB] border border-[#FDE68A] p-3 rounded-xl">
-                  <strong>CRA Note:</strong> {activeEntryDetails.notes}
+                  <strong>CRA / Taxpayer Note:</strong> {activeEntryDetails.notes}
                 </div>
               )}
             </div>

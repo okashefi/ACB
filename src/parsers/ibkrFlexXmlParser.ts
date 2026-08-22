@@ -15,6 +15,11 @@ export interface ParsedFlexStatement {
   hasTradesSection: boolean;
   hasCashTransactionsSection: boolean;
   hasOpenPositionsSection: boolean;
+  hasAccountInformationSection: boolean;
+  hasFinancialInstrumentInformationSection: boolean;
+  hasConversionDetailsSection: boolean;
+  hasOptionExercisesSection: boolean;
+  hasTransfersSection: boolean;
   errors: string[];
 }
 
@@ -41,10 +46,17 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
   const transactions: Transaction[] = [];
   const openPositions: OpenPosition[] = [];
 
+
   let hasCorporateActionsSection = false;
   let hasTradesSection = false;
   let hasCashTransactionsSection = false;
   let hasOpenPositionsSection = false;
+  let hasAccountInformationSection = false;
+  let hasFinancialInstrumentInformationSection = false;
+  let hasConversionDetailsSection = false;
+  let hasOptionExercisesSection = false;
+  let hasTransfersSection = false;
+
 
   const toArray = (obj: any): any[] => {
     if (!obj) return [];
@@ -54,6 +66,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
   for (const stmt of flexStatements) {
     // 1. Account Information
     const acctInfoList = toArray(stmt.AccountInformation || stmt.AccountInfo);
+    if (acctInfoList.length > 0) hasAccountInformationSection = true;
     for (const info of acctInfoList) {
       const acctId = info.accountId || info.account || 'U_DEFAULT';
       const alias = info.acctAlias || info.accountAlias || info.accountTitle || acctId;
@@ -80,6 +93,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
 
     // 2. Financial Instrument Information (Security Master)
     const secList = toArray(stmt.SecuritiesInfo?.SecurityInfo || stmt.FinancialInstrumentInformation?.FinancialInstrumentInfo);
+    if (secList.length > 0) hasFinancialInstrumentInformationSection = true;
     for (const s of secList) {
       const conid = s.conid || s.conId || '';
       const symbol = s.symbol || s.ticker || '';
@@ -93,7 +107,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
         optionDetails = {
           underlyingSymbol: s.underlyingSymbol || symbol.split(' ')[0] || symbol,
           putOrCall: (s.putCall || (symbol.includes('P') ? 'PUT' : 'CALL')).toUpperCase() as 'PUT' | 'CALL',
-          strike: parseFloat(s.strike || '0'),
+          strike: parseFloat(s.strike || '0').toString().toString(),
           expiryDate: s.expiry || s.maturity || '',
           multiplier: parseInt(s.multiplier || '100', 10),
           deliverable: s.deliverable,
@@ -117,6 +131,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
 
     // 3. Trades (Executions)
     const tradesList = toArray(stmt.Trades?.Trade || stmt.Trades?.Execution);
+    if (tradesList.length > 0) hasTradesSection = true;
     if (tradesList.length > 0) hasTradesSection = true;
 
     for (const t of tradesList) {
@@ -178,17 +193,17 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
         date,
         settlementDate: t.settleDateTarget?.replace(/\//g, '-'),
         transactionType: txType,
-        quantity: qty,
-        price,
+        quantity: String(qty),
+        price: String(price),
         currency,
-        commission: comm,
-        totalGrossAmount: grossAmount,
-        totalNetAmount: grossAmount + (buySell.includes('BUY') ? comm : -comm),
-        fxRate,
+        commission: String(comm),
+        totalGrossAmount: grossAmount.toString(),
+        totalNetAmount: (grossAmount + (buySell.includes('BUY') ? comm : -comm)).toString(),
+        fxRate: String(fxRate),
         fxRateSource: fxSource,
-        amountCad,
-        commissionCad: commCad,
-        totalOutlaysCad: commCad,
+        amountCad: String(amountCad),
+        commissionCad: commCad.toString(),
+        totalOutlaysCad: commCad.toString(),
         ibkrCode: code,
         ibkrTransactionId: tradeId,
         status: isCancelled ? 'rejected' : 'auto_approved',
@@ -228,8 +243,8 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
         statutoryBasis,
         brokerDescription: desc,
         oldSecurityId: secId,
-        totalCashReceived: cashCad,
-        newSharesReceived: Math.abs(qty),
+        totalCashReceived: String(cashCad),
+        newSharesReceived: String(Math.abs(qty)),
         userNotes: notes,
       };
 
@@ -240,17 +255,17 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
         symbol,
         date,
         transactionType: suggestedTreatment === 'CONTINUITY_SPLIT' ? 'STOCK_SPLIT' : 'MERGER_MIXED',
-        quantity: Math.abs(qty),
-        price: 0,
+        quantity: Math.abs(qty).toString(),
+        price: '0',
         currency,
-        commission: 0,
-        totalGrossAmount: Math.abs(cash),
-        totalNetAmount: Math.abs(cash),
-        fxRate,
+        commission: '0',
+        totalGrossAmount: Math.abs(cash).toString(),
+        totalNetAmount: Math.abs(cash).toString(),
+        fxRate: String(fxRate),
         fxRateSource: fxSource,
-        amountCad: cashCad,
-        commissionCad: 0,
-        totalOutlaysCad: 0,
+        amountCad: String(cashCad),
+        commissionCad: '0',
+        totalOutlaysCad: '0',
         corporateAction: caDetails,
         status: suggestedTreatment === 'CONTINUITY_SPLIT' ? 'auto_approved' : 'needs_review',
         reviewNotes: notes,
@@ -295,17 +310,17 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
         symbol,
         date,
         transactionType: txType,
-        quantity: 0,
-        price: 0,
+        quantity: '0',
+        price: '0',
         currency,
-        commission: 0,
-        totalGrossAmount: amount,
-        totalNetAmount: amount,
-        fxRate,
+        commission: '0',
+        totalGrossAmount: amount.toString(),
+        totalNetAmount: amount.toString(),
+        fxRate: String(fxRate),
         fxRateSource: fxSource,
-        amountCad,
-        commissionCad: 0,
-        totalOutlaysCad: 0,
+        amountCad: String(amountCad),
+        commissionCad: '0',
+        totalOutlaysCad: '0',
         status: 'auto_approved',
         source: 'IBKR_FLEX_API',
       });
@@ -332,12 +347,11 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
         symbol,
         conid,
         isin: p.isin,
-        quantity: qty,
-        costPrice,
+        quantity: String(qty),
+        costPrice: String(costPrice),
         currency,
-        markPrice,
-        positionValueCad: posValCad,
-        fifoPnlUnrealized: parseFloat(p.fifoPnlUnrealized || '0'),
+        markPrice: String(markPrice),
+        positionValueCad: String(posValCad),
         asOfDate: stmt.toDate || stmt.reportDate || '2026-08-22',
       });
     }
@@ -356,15 +370,25 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
     });
   }
 
+
   return {
     accounts: Array.from(accountsMap.values()),
     securities: Array.from(securitiesMap.values()),
     transactions,
     openPositions,
+    rawReferenceCode: parsed.FlexQueryResponse?.queryId || parsed.FlexStatements?.queryId,
+    queryId: parsed.FlexQueryResponse?.queryName || '',
+    statementDate: parsed.FlexQueryResponse?.whenGenerated || parsed.FlexStatements?.whenGenerated,
     hasCorporateActionsSection,
     hasTradesSection,
     hasCashTransactionsSection,
     hasOpenPositionsSection,
+    hasAccountInformationSection,
+    hasFinancialInstrumentInformationSection,
+    hasConversionDetailsSection,
+    hasOptionExercisesSection,
+    hasTransfersSection,
     errors,
   };
+
 }

@@ -42,11 +42,8 @@ export const ConnectionsView: React.FC<ConnectionsViewProps> = ({
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     onSaveConfig({
-      token: tokenInput,
-      tokenLast4: tokenInput ? tokenInput.slice(-4) : '',
       queryId: queryIdInput,
       syncInterval: syncInterval as any,
-      status: tokenInput ? 'CONNECTED' : 'UNCONFIGURED',
     });
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);
@@ -132,17 +129,21 @@ export const ConnectionsView: React.FC<ConnectionsViewProps> = ({
               <label className="block text-[#18181B] font-medium mb-1">
                 Flex Web Service Token <span className="text-[#71717A] font-normal">(Read-only reporting token)</span>
               </label>
-              <input
-                id="input-flex-token"
-                type="password"
-                placeholder="e.g. 12345678901234567890"
-                value={tokenInput}
-                onChange={(e) => setTokenInput(e.target.value)}
-                className="w-full bg-[#F9FAFB] border border-[#E4E4E7] rounded-xl px-3 py-2 text-[#18181B] font-mono focus:outline-none focus:border-[#3B82F6] focus:bg-white transition-colors"
-              />
-              <p className="text-[10px] text-[#A1A1AA] mt-1">
-                Tokens are stored locally encrypted and never sent to third parties.
-              </p>
+              {flexConfig.tokenLast4 ? (
+                <div className="w-full bg-[#F9FAFB] border border-[#E4E4E7] rounded-xl px-3 py-2 text-[#18181B] font-mono flex items-center justify-between">
+                   <span>••••••••••••{flexConfig.tokenLast4}</span>
+                   <button type="button" onClick={() => onSaveConfig({ tokenLast4: '', token: '' })} className="text-xs text-[#DC2626] font-sans">Clear</button>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <div className="w-full bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-xl px-3 py-2 text-xs">
+                     For security, please configure your Token in the server's <strong>.env</strong> file (IBKR_FLEX_TOKEN). 
+                     Tokens are never stored in localStorage in plaintext. 
+                     <br/><br/>
+                     <em>Warning: IBKR Flex Tokens expire! The default expiry is often 6 hours up to 1 year depending on your setup. If it fails, generate a new one in the Client Portal.</em>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

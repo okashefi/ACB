@@ -10,16 +10,16 @@ export function d(val: number | string | Decimal | null | undefined): Decimal {
   return new Decimal(val);
 }
 
-export function toMoney(val: number | string | Decimal): string {
-  return d(val).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toString();
+export function toMoney(val: number | string | Decimal): number {
+  return d(val).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
 }
 
-export function toShares(val: number | string | Decimal): string {
-  return d(val).toDecimalPlaces(6, Decimal.ROUND_HALF_UP).toString();
+export function toShares(val: number | string | Decimal): number {
+  return d(val).toDecimalPlaces(6, Decimal.ROUND_HALF_UP).toNumber();
 }
 
-export function toRate(val: number | string | Decimal): string {
-  return d(val).toDecimalPlaces(6, Decimal.ROUND_HALF_UP).toString();
+export function toRate(val: number | string | Decimal): number {
+  return d(val).toDecimalPlaces(6, Decimal.ROUND_HALF_UP).toNumber();
 }
 
 export function formatCad(val: number | string | Decimal | undefined | null): string {

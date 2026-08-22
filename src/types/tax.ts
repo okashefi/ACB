@@ -193,9 +193,9 @@ export interface SuperficialLossEvent {
   securityId: string;
   symbol: string;
   dispositionDate: string;
-  rawCapitalLossCad: string; // Absolute amount of loss
-  deniedLossCad: string; // Amount deemed superficial
-  allowedLossCad: string; // Loss recognized on Schedule 3
+  rawCapitalLossCad: number; // Absolute amount of loss
+  deniedLossCad: number; // Amount deemed superficial
+  allowedLossCad: number; // Loss recognized on Schedule 3
   
   // Matching replacement
   replacementTransactionId?: string;
@@ -217,28 +217,28 @@ export interface RealizedGainLoss {
   symbol: string;
   securityName: string;
   assetClass: AssetClass;
-  quantityDisposed: string;
+  quantityDisposed: number;
   
   // Proceeds
-  grossProceedsCad: string;
-  dispositionOutlaysCad: string; // Selling commissions & fees
-  netProceedsCad: string;
+  grossProceedsCad: number;
+  dispositionOutlaysCad: number; // Selling commissions & fees
+  netProceedsCad: number;
   
   // Cost base
-  acbPerUnitPriorCad: string;
-  acbOfUnitsDisposedCad: string;
+  acbPerUnitPriorCad: number;
+  acbOfUnitsDisposedCad: number;
   
   // Raw Gain/Loss
-  rawGainLossCad: string;
+  rawGainLossCad: number;
   
   // Superficial loss adjustments
   isSuperficialLoss: boolean;
-  superficialLossDeniedCad: string;
+  superficialLossDeniedCad: number;
   replacementTargetSecurityId?: string;
   isPermanentlyDeniedInRegistered: boolean;
   
   // Final recognized capital gain or loss for Schedule 3
-  recognizedGainLossCad: string;
+  recognizedGainLossCad: number;
   
   // Underlying transactions & rule citations
   dispositionTransactionId: string;
@@ -256,21 +256,21 @@ export interface AcbLedgerEntry {
   description: string;
   
   // Quantity delta
-  quantityChange: string;
-  runningQuantity: string;
+  quantityChange: number;
+  runningQuantity: number;
   
   // Cost delta
-  costChangeCad: string; // Positive for adds, negative for dispositions
-  runningTotalAcbCad: string;
-  runningAcbPerUnitCad: string;
+  costChangeCad: number; // Positive for adds, negative for dispositions
+  runningTotalAcbCad: number;
+  runningAcbPerUnitCad: number;
   
   // Gain/Loss if disposition
-  realizedGainLossCad?: string;
-  superficialLossAdjustmentCad?: string;
+  realizedGainLossCad?: number;
+  superficialLossAdjustmentCad?: number;
   
   // FX details
   originalCurrency: Currency;
-  fxRateUsed: string;
+  fxRateUsed: number;
   fxRateSource: string;
   
   statutoryRule: string; // e.g. "ITA s. 47(1) Average Cost Pool"
@@ -282,27 +282,27 @@ export interface SecurityRollforward {
   symbol: string;
   name: string;
   taxYear: number;
-  openingQuantity: string;
-  openingAcbCad: string;
-  openingAcbPerUnitCad: string;
+  openingQuantity: number;
+  openingAcbCad: number;
+  openingAcbPerUnitCad: number;
   
-  acquisitionsQuantity: string;
-  acquisitionsCostCad: string;
+  acquisitionsQuantity: number;
+  acquisitionsCostCad: number;
   
-  dispositionsQuantity: string;
-  dispositionsAcbRemovedCad: string;
+  dispositionsQuantity: number;
+  dispositionsAcbRemovedCad: number;
   
-  rocAdjustmentsCad: string; // Return of capital reductions
-  superficialLossAdditionsCad: string; // Denied losses added back to ACB
-  corporateActionAdjustmentsCad: string;
+  rocAdjustmentsCad: number; // Return of capital reductions
+  superficialLossAdditionsCad: number; // Denied losses added back to ACB
+  corporateActionAdjustmentsCad: number;
   
-  closingQuantity: string;
-  closingTotalAcbCad: string;
-  closingAcbPerUnitCad: string;
+  closingQuantity: number;
+  closingTotalAcbCad: number;
+  closingAcbPerUnitCad: number;
   
-  realizedGainLossTotalCad: string;
-  unrealizedGainLossCad?: string;
-  currentMarketPriceCad?: string;
+  realizedGainLossTotalCad: number;
+  unrealizedGainLossCad?: number;
+  currentMarketPriceCad?: number;
 }
 
 export interface OpenPosition {
@@ -316,7 +316,6 @@ export interface OpenPosition {
   currency: Currency;
   markPrice: string;
   positionValueCad: string;
-  fifoPnlUnrealized?: string;
   asOfDate: string;
 }
 
@@ -328,7 +327,6 @@ export interface ReconciliationBreak {
   brokerReportedQuantity: string;
   quantityDiscrepancy: string;
   calculatedAcbCad: string;
-  brokerFifoCostCad?: string;
   status: 'MATCHED' | 'QUANTITY_BREAK' | 'UNREVIEWED_ACTIONS_PENDING';
   explanation: string;
 }

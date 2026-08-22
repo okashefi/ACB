@@ -58,20 +58,20 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const txs: Transaction[] = [
       {
         id: 'T1_1', accountId: 'ACCT_TAXABLE', securityId: 'SEC_RY', symbol: 'RY.TO', date: '2024-01-10',
-        transactionType: 'BUY', quantity: 100, price: 10, currency: 'CAD', commission: 0, totalGrossAmount: 1000,
-        totalNetAmount: 1000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 1000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'BUY', quantity: '100', price: '10', currency: 'CAD', commission: '0', totalGrossAmount: '1000',
+        totalNetAmount: '1000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '1000', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
       {
         id: 'T1_2', accountId: 'ACCT_TAXABLE', securityId: 'SEC_RY', symbol: 'RY.TO', date: '2024-02-15',
-        transactionType: 'BUY', quantity: 100, price: 20, currency: 'CAD', commission: 0, totalGrossAmount: 2000,
-        totalNetAmount: 2000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 2000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'BUY', quantity: '100', price: '20', currency: 'CAD', commission: '0', totalGrossAmount: '2000',
+        totalNetAmount: '2000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '2000', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
       {
         id: 'T1_3', accountId: 'ACCT_TAXABLE', securityId: 'SEC_RY', symbol: 'RY.TO', date: '2024-05-20',
-        transactionType: 'SELL', quantity: 100, price: 25, currency: 'CAD', commission: 0, totalGrossAmount: 2500,
-        totalNetAmount: 2500, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 2500, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'SELL', quantity: '100', price: '25', currency: 'CAD', commission: '0', totalGrossAmount: '2500',
+        totalNetAmount: '2500', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '2500', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
     ];
@@ -80,7 +80,7 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const balance = out.securityBalances.get('SEC_RY');
     const rgl = out.realizedGainsLosses[0];
 
-    const passed = balance?.quantity === 100 && balance?.totalAcbCad === 1500 && rgl?.recognizedGainLossCad === 1000;
+    const passed = Number(balance?.quantity) === 100 && Number(balance?.totalAcbCad) === 1500 && Number(rgl?.recognizedGainLossCad) === 1000;
     results.push({
       id: 'TEST_1',
       name: 'Simple Average Cost Buy/Buy/Sell',
@@ -106,21 +106,21 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const txs: Transaction[] = [
       {
         id: 'T2_1', accountId: 'ACCT_TAXABLE', securityId: 'SEC_AAPL', symbol: 'AAPL', date: '2024-01-15',
-        transactionType: 'BUY', quantity: 100, price: 100, currency: 'USD', commission: 0, totalGrossAmount: 10000,
-        totalNetAmount: 10000, fxRate: 1.30, fxRateSource: 'BANK_OF_CANADA', amountCad: 13000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'BUY', quantity: '100', price: '100', currency: 'USD', commission: '0', totalGrossAmount: '10000',
+        totalNetAmount: '10000', fxRate: '1.30', fxRateSource: 'BANK_OF_CANADA', amountCad: '13000', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
       {
         id: 'T2_2', accountId: 'ACCT_TAXABLE', securityId: 'SEC_AAPL', symbol: 'AAPL', date: '2024-06-15',
-        transactionType: 'SELL', quantity: 100, price: 110, currency: 'USD', commission: 0, totalGrossAmount: 11000,
-        totalNetAmount: 11000, fxRate: 1.35, fxRateSource: 'BANK_OF_CANADA', amountCad: 14850, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'SELL', quantity: '100', price: '110', currency: 'USD', commission: '0', totalGrossAmount: '11000',
+        totalNetAmount: '11000', fxRate: '1.35', fxRateSource: 'BANK_OF_CANADA', amountCad: '14850', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
     ];
 
     const out = runAcbEngine(txs, [taxableAcct], [sec]);
     const rgl = out.realizedGainsLosses[0];
-    const passed = rgl?.recognizedGainLossCad === 1850 && rgl?.grossProceedsCad === 14850 && rgl?.acbOfUnitsDisposedCad === 13000;
+    const passed = Number(rgl?.recognizedGainLossCad) === 1850 && Number(rgl?.grossProceedsCad) === 14850 && Number(rgl?.acbOfUnitsDisposedCad) === 13000;
 
     results.push({
       id: 'TEST_2',
@@ -147,20 +147,20 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const txs: Transaction[] = [
       {
         id: 'T3_1', accountId: 'ACCT_TAXABLE', securityId: 'SEC_SHOP', symbol: 'SHOP.TO', date: '2024-03-01',
-        transactionType: 'BUY', quantity: 100, price: 50, currency: 'CAD', commission: 0, totalGrossAmount: 5000,
-        totalNetAmount: 5000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 5000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'BUY', quantity: '100', price: '50', currency: 'CAD', commission: '0', totalGrossAmount: '5000',
+        totalNetAmount: '5000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '5000', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
       {
         id: 'T3_2', accountId: 'ACCT_TAXABLE', securityId: 'SEC_SHOP', symbol: 'SHOP.TO', date: '2024-04-01',
-        transactionType: 'SELL', quantity: 100, price: 30, currency: 'CAD', commission: 0, totalGrossAmount: 3000,
-        totalNetAmount: 3000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 3000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'SELL', quantity: '100', price: '30', currency: 'CAD', commission: '0', totalGrossAmount: '3000',
+        totalNetAmount: '3000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '3000', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
       {
         id: 'T3_3', accountId: 'ACCT_TAXABLE', securityId: 'SEC_SHOP', symbol: 'SHOP.TO', date: '2024-04-10',
-        transactionType: 'BUY', quantity: 100, price: 32, currency: 'CAD', commission: 0, totalGrossAmount: 3200,
-        totalNetAmount: 3200, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 3200, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'BUY', quantity: '100', price: '32', currency: 'CAD', commission: '0', totalGrossAmount: '3200',
+        totalNetAmount: '3200', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '3200', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
     ];
@@ -169,7 +169,7 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const balance = out.securityBalances.get('SEC_SHOP');
     const rgl = out.realizedGainsLosses[0];
 
-    const passed = rgl?.recognizedGainLossCad === 0 && rgl?.superficialLossDeniedCad === 2000 && balance?.totalAcbCad === 5200;
+    const passed = Number(rgl?.recognizedGainLossCad) === 0 && Number(rgl?.superficialLossDeniedCad) === 2000 && Number(balance?.totalAcbCad) === 5200;
 
     results.push({
       id: 'TEST_3',
@@ -196,20 +196,20 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const txs: Transaction[] = [
       {
         id: 'T4_1', accountId: 'ACCT_TAXABLE', securityId: 'SEC_SHOP2', symbol: 'SHOP.TO', date: '2024-03-01',
-        transactionType: 'BUY', quantity: 100, price: 50, currency: 'CAD', commission: 0, totalGrossAmount: 5000,
-        totalNetAmount: 5000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 5000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'BUY', quantity: '100', price: '50', currency: 'CAD', commission: '0', totalGrossAmount: '5000',
+        totalNetAmount: '5000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '5000', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
       {
         id: 'T4_2', accountId: 'ACCT_TAXABLE', securityId: 'SEC_SHOP2', symbol: 'SHOP.TO', date: '2024-04-01',
-        transactionType: 'SELL', quantity: 100, price: 30, currency: 'CAD', commission: 0, totalGrossAmount: 3000,
-        totalNetAmount: 3000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 3000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'SELL', quantity: '100', price: '30', currency: 'CAD', commission: '0', totalGrossAmount: '3000',
+        totalNetAmount: '3000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '3000', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
       {
         id: 'T4_3', accountId: 'ACCT_TFSA', securityId: 'SEC_SHOP2', symbol: 'SHOP.TO', date: '2024-04-05',
-        transactionType: 'BUY', quantity: 100, price: 30, currency: 'CAD', commission: 0, totalGrossAmount: 3000,
-        totalNetAmount: 3000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 3000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'BUY', quantity: '100', price: '30', currency: 'CAD', commission: '0', totalGrossAmount: '3000',
+        totalNetAmount: '3000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '3000', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
     ];
@@ -218,7 +218,7 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const rgl = out.realizedGainsLosses[0];
     const sl = out.superficialLosses[0];
 
-    const passed = rgl?.recognizedGainLossCad === 0 && sl?.isPermanentlyDeniedInRegistered === true;
+    const passed = Number(rgl?.recognizedGainLossCad) === 0 && sl?.isPermanentlyDeniedInRegistered === true;
 
     results.push({
       id: 'TEST_4',
@@ -245,14 +245,14 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const txs: Transaction[] = [
       {
         id: 'T5_1', accountId: 'ACCT_TAXABLE', securityId: 'SEC_NVDA', symbol: 'NVDA', date: '2024-01-10',
-        transactionType: 'BUY', quantity: 100, price: 50, currency: 'CAD', commission: 0, totalGrossAmount: 5000,
-        totalNetAmount: 5000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 5000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'BUY', quantity: '100', price: '50', currency: 'CAD', commission: '0', totalGrossAmount: '5000',
+        totalNetAmount: '5000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '5000', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
       {
         id: 'T5_2', accountId: 'ACCT_TAXABLE', securityId: 'SEC_NVDA', symbol: 'NVDA', date: '2024-03-01',
-        transactionType: 'STOCK_SPLIT', quantity: 0, price: 0, currency: 'CAD', commission: 0, totalGrossAmount: 0,
-        totalNetAmount: 0, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 0, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'STOCK_SPLIT', quantity: '0', price: '0', currency: 'CAD', commission: '0', totalGrossAmount: '0',
+        totalNetAmount: '0', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '0', commissionCad: '0', totalOutlaysCad: '0',
         corporateAction: {
           treatment: 'CONTINUITY_SPLIT',
           statutoryBasis: 'ITA s. 47(1) Stock Split',
@@ -264,8 +264,8 @@ export function runAllTestFixtures(): TestFixtureResult[] {
       },
       {
         id: 'T5_3', accountId: 'ACCT_TAXABLE', securityId: 'SEC_NVDA', symbol: 'NVDA', date: '2024-04-01',
-        transactionType: 'SELL', quantity: 50, price: 30, currency: 'CAD', commission: 0, totalGrossAmount: 1500,
-        totalNetAmount: 1500, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 1500, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'SELL', quantity: '50', price: '30', currency: 'CAD', commission: '0', totalGrossAmount: '1500',
+        totalNetAmount: '1500', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '1500', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
     ];
@@ -274,7 +274,7 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const balance = out.securityBalances.get('SEC_NVDA');
     const rgl = out.realizedGainsLosses[0];
 
-    const passed = balance?.quantity === 150 && balance?.totalAcbCad === 3750 && rgl?.recognizedGainLossCad === 250;
+    const passed = Number(balance?.quantity) === 150 && Number(balance?.totalAcbCad) === 3750 && Number(rgl?.recognizedGainLossCad) === 250;
 
     results.push({
       id: 'TEST_5',
@@ -301,14 +301,14 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const txs: Transaction[] = [
       {
         id: 'T6_1', accountId: 'ACCT_TAXABLE', securityId: 'SEC_REIT', symbol: 'REIT.UN', date: '2024-01-10',
-        transactionType: 'BUY', quantity: 100, price: 10, currency: 'CAD', commission: 0, totalGrossAmount: 1000,
-        totalNetAmount: 1000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 1000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'BUY', quantity: '100', price: '10', currency: 'CAD', commission: '0', totalGrossAmount: '1000',
+        totalNetAmount: '1000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '1000', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
       {
         id: 'T6_2', accountId: 'ACCT_TAXABLE', securityId: 'SEC_REIT', symbol: 'REIT.UN', date: '2024-06-15',
-        transactionType: 'RETURN_OF_CAPITAL', quantity: 0, price: 0, currency: 'CAD', commission: 0, totalGrossAmount: 1200,
-        totalNetAmount: 1200, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 1200, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'RETURN_OF_CAPITAL', quantity: '0', price: '0', currency: 'CAD', commission: '0', totalGrossAmount: '1200',
+        totalNetAmount: '1200', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '1200', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
     ];
@@ -317,7 +317,7 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const balance = out.securityBalances.get('SEC_REIT');
     const rgl = out.realizedGainsLosses[0];
 
-    const passed = balance?.totalAcbCad === 0 && rgl?.recognizedGainLossCad === 200;
+    const passed = Number(balance?.totalAcbCad) === 0 && Number(rgl?.recognizedGainLossCad) === 200;
 
     results.push({
       id: 'TEST_6',
@@ -346,23 +346,23 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const txs: Transaction[] = [
       {
         id: 'T7_1', accountId: 'ACCT_TAXABLE', securityId: 'SEC_TARGET_4D4', symbol: 'TGT', date: '2024-01-10',
-        transactionType: 'BUY', quantity: 100, price: 20, currency: 'CAD', commission: 0, totalGrossAmount: 2000,
-        totalNetAmount: 2000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 2000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'BUY', quantity: '100', price: '20', currency: 'CAD', commission: '0', totalGrossAmount: '2000',
+        totalNetAmount: '2000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '2000', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
       {
         id: 'T7_2', accountId: 'ACCT_TAXABLE', securityId: 'SEC_TARGET_4D4', symbol: 'TGT', date: '2024-05-15',
-        transactionType: 'MERGER_MIXED', quantity: 100, price: 0, currency: 'CAD', commission: 0, totalGrossAmount: 1000,
-        totalNetAmount: 1000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 1000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'MERGER_MIXED', quantity: '100', price: '0', currency: 'CAD', commission: '0', totalGrossAmount: '1000',
+        totalNetAmount: '1000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '1000', commissionCad: '0', totalOutlaysCad: '0',
         corporateAction: {
           treatment: 'MIXED_CAPITAL_BOOT_TAXABLE',
           statutoryBasis: 'ITA s. 40(1) Taxable Foreign Merger',
           brokerDescription: 'Merger: $10 Cash + 0.5 ACQ shares per TGT share',
           oldSecurityId: 'SEC_TARGET_4D4',
           newSecurityId: 'SEC_ACQ_4D4',
-          totalCashReceived: 1000,
-          newSharesReceived: 50,
-          newShareFmvPerShare: 30, // 50 * 30 = $1,500
+          totalCashReceived: '1000',
+          newSharesReceived: '50',
+          newShareFmvPerShare: '30', // 50 * 30 = $1,500
         },
         status: 'approved', source: 'TEST_FIXTURE',
       },
@@ -373,7 +373,7 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const newBalance = out.securityBalances.get('SEC_ACQ_4D4');
     const rgl = out.realizedGainsLosses[0];
 
-    const passed = oldBalance?.quantity === 0 && rgl?.recognizedGainLossCad === 500 && newBalance?.quantity === 50 && newBalance?.totalAcbCad === 1500;
+    const passed = Number(oldBalance?.quantity) === 0 && Number(rgl?.recognizedGainLossCad) === 500 && Number(newBalance?.quantity) === 50 && Number(newBalance?.totalAcbCad) === 1500;
 
     results.push({
       id: 'TEST_7',
@@ -402,23 +402,23 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const txs: Transaction[] = [
       {
         id: 'T8_1', accountId: 'ACCT_TAXABLE', securityId: 'SEC_TARGET_4D6', symbol: 'TGT6', date: '2024-01-10',
-        transactionType: 'BUY', quantity: 100, price: 20, currency: 'CAD', commission: 0, totalGrossAmount: 2000,
-        totalNetAmount: 2000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 2000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'BUY', quantity: '100', price: '20', currency: 'CAD', commission: '0', totalGrossAmount: '2000',
+        totalNetAmount: '2000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '2000', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
       {
         id: 'T8_2', accountId: 'ACCT_TAXABLE', securityId: 'SEC_TARGET_4D6', symbol: 'TGT6', date: '2024-05-15',
-        transactionType: 'MERGER_MIXED', quantity: 100, price: 0, currency: 'CAD', commission: 0, totalGrossAmount: 400,
-        totalNetAmount: 400, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 400, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'MERGER_MIXED', quantity: '100', price: '0', currency: 'CAD', commission: '0', totalGrossAmount: '400',
+        totalNetAmount: '400', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '400', commissionCad: '0', totalOutlaysCad: '0',
         corporateAction: {
           treatment: 'MIXED_CAPITAL_BOOT_ROLLOVER',
           statutoryBasis: 'ITA s. 85.1(2) Rollover with Boot (Loss Case)',
           brokerDescription: 'Merger: $4 Cash + 50 ACQ shares',
           oldSecurityId: 'SEC_TARGET_4D6',
           newSecurityId: 'SEC_ACQ_4D6',
-          totalCashReceived: 400,
-          newSharesReceived: 50,
-          newShareFmvPerShare: 24, // 50 * 24 = $1,200
+          totalCashReceived: '400',
+          newSharesReceived: '50',
+          newShareFmvPerShare: '24', // 50 * 24 = $1,200
         },
         status: 'approved', source: 'TEST_FIXTURE',
       },
@@ -428,7 +428,7 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const newBalance = out.securityBalances.get('SEC_ACQ_4D6');
     const rglCount = out.realizedGainsLosses.length;
 
-    const passed = rglCount === 0 && newBalance?.totalAcbCad === 1600 && newBalance?.quantity === 50;
+    const passed = rglCount === 0 && Number(newBalance?.totalAcbCad) === 1600 && Number(newBalance?.quantity) === 50;
 
     results.push({
       id: 'TEST_8',
@@ -457,23 +457,23 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const txs: Transaction[] = [
       {
         id: 'T9_1', accountId: 'ACCT_TAXABLE', securityId: 'SEC_TARGET_4D7', symbol: 'TGT7', date: '2024-01-10',
-        transactionType: 'BUY', quantity: 100, price: 20, currency: 'CAD', commission: 0, totalGrossAmount: 2000,
-        totalNetAmount: 2000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 2000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'BUY', quantity: '100', price: '20', currency: 'CAD', commission: '0', totalGrossAmount: '2000',
+        totalNetAmount: '2000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '2000', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
       {
         id: 'T9_2', accountId: 'ACCT_TAXABLE', securityId: 'SEC_TARGET_4D7', symbol: 'TGT7', date: '2024-05-15',
-        transactionType: 'MERGER_MIXED', quantity: 100, price: 0, currency: 'CAD', commission: 0, totalGrossAmount: 1000,
-        totalNetAmount: 1000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 1000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'MERGER_MIXED', quantity: '100', price: '0', currency: 'CAD', commission: '0', totalGrossAmount: '1000',
+        totalNetAmount: '1000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '1000', commissionCad: '0', totalOutlaysCad: '0',
         corporateAction: {
           treatment: 'MIXED_TAKEOVER_DIVIDEND',
           statutoryBasis: 'ITA s. 84(2) Takeover Deemed Dividend + s. 85.1 Rollover',
           brokerDescription: 'Merger + Special Takeover Dividend $1,000',
           oldSecurityId: 'SEC_TARGET_4D7',
           newSecurityId: 'SEC_ACQ_4D7',
-          totalCashReceived: 1000,
-          newSharesReceived: 50,
-          newShareFmvPerShare: 30,
+          totalCashReceived: '1000',
+          newSharesReceived: '50',
+          newShareFmvPerShare: '30',
         },
         status: 'approved', source: 'TEST_FIXTURE',
       },
@@ -483,7 +483,7 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const newBalance = out.securityBalances.get('SEC_ACQ_4D7');
     const divIncome = out.incomeDistributions.dividendsCad;
 
-    const passed = newBalance?.totalAcbCad === 2000 && divIncome === 1000;
+    const passed = Number(newBalance?.totalAcbCad) === 2000 && Number(divIncome) === 1000;
 
     results.push({
       id: 'TEST_9',
@@ -516,14 +516,14 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const txs: Transaction[] = [
       {
         id: 'T10_1', accountId: 'ACCT_TAXABLE', securityId: 'SEC_XYZ_OPT', symbol: 'XYZ C100', date: '2024-01-15',
-        transactionType: 'BUY_TO_OPEN_OPT', quantity: 1, price: 5, currency: 'CAD', commission: 0, totalGrossAmount: 500,
-        totalNetAmount: 500, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 500, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'BUY_TO_OPEN_OPT', quantity: '1', price: '5', currency: 'CAD', commission: '0', totalGrossAmount: '500',
+        totalNetAmount: '500', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '500', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
       {
         id: 'T10_2', accountId: 'ACCT_TAXABLE', securityId: 'SEC_XYZ_OPT', symbol: 'XYZ C100', date: '2024-06-20',
-        transactionType: 'EXERCISE_LONG_CALL', quantity: 1, price: 100, currency: 'CAD', commission: 0, totalGrossAmount: 10000,
-        totalNetAmount: 10000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 10000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'EXERCISE_LONG_CALL', quantity: '1', price: '100', currency: 'CAD', commission: '0', totalGrossAmount: '10000',
+        totalNetAmount: '10000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '10000', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
     ];
@@ -531,7 +531,7 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const out = runAcbEngine(txs, [taxableAcct], [secOpt, secStk]);
     const balance = out.securityBalances.get('SEC_XYZ');
 
-    const passed = balance?.quantity === 100 && balance?.totalAcbCad === 10500 && balance?.acbPerUnitCad === 105;
+    const passed = Number(balance?.quantity) === 100 && Number(balance?.totalAcbCad) === 10500 && Number(balance?.acbPerUnitCad) === 105;
 
     results.push({
       id: 'TEST_10',
@@ -559,20 +559,20 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const txs: Transaction[] = [
       {
         id: 'T11_1', accountId: 'ACCT_TAXABLE', securityId: 'SEC_BNS', symbol: 'BNS.TO', date: '2024-01-10',
-        transactionType: 'BUY', quantity: 100, price: 60, currency: 'CAD', commission: 0, totalGrossAmount: 6000,
-        totalNetAmount: 6000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 6000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'BUY', quantity: '100', price: '60', currency: 'CAD', commission: '0', totalGrossAmount: '6000',
+        totalNetAmount: '6000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '6000', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
       {
         id: 'T11_2', accountId: 'ACCT_QUESTRADE', securityId: 'SEC_BNS', symbol: 'BNS.TO', date: '2024-02-15',
-        transactionType: 'BUY', quantity: 100, price: 80, currency: 'CAD', commission: 0, totalGrossAmount: 8000,
-        totalNetAmount: 8000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 8000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'BUY', quantity: '100', price: '80', currency: 'CAD', commission: '0', totalGrossAmount: '8000',
+        totalNetAmount: '8000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '8000', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
       {
         id: 'T11_3', accountId: 'ACCT_QUESTRADE', securityId: 'SEC_BNS', symbol: 'BNS.TO', date: '2024-04-20',
-        transactionType: 'SELL', quantity: 100, price: 90, currency: 'CAD', commission: 0, totalGrossAmount: 9000,
-        totalNetAmount: 9000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 9000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'SELL', quantity: '100', price: '90', currency: 'CAD', commission: '0', totalGrossAmount: '9000',
+        totalNetAmount: '9000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '9000', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
     ];
@@ -581,7 +581,7 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const balance = out.securityBalances.get('SEC_BNS');
     const rgl = out.realizedGainsLosses[0];
 
-    const passed = balance?.quantity === 100 && balance?.totalAcbCad === 7000 && rgl?.recognizedGainLossCad === 2000;
+    const passed = Number(balance?.quantity) === 100 && Number(balance?.totalAcbCad) === 7000 && Number(rgl?.recognizedGainLossCad) === 2000;
 
     results.push({
       id: 'TEST_11',
@@ -610,22 +610,22 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const txs: Transaction[] = [
       {
         id: 'T12_1', accountId: 'ACCT_TAXABLE', securityId: 'SEC_PARENT', symbol: 'PARENT', date: '2024-01-10',
-        transactionType: 'BUY', quantity: 100, price: 100, currency: 'CAD', commission: 0, totalGrossAmount: 10000,
-        totalNetAmount: 10000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 10000, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'BUY', quantity: '100', price: '100', currency: 'CAD', commission: '0', totalGrossAmount: '10000',
+        totalNetAmount: '10000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '10000', commissionCad: '0', totalOutlaysCad: '0',
         status: 'approved', source: 'TEST_FIXTURE',
       },
       {
         id: 'T12_2', accountId: 'ACCT_TAXABLE', securityId: 'SEC_PARENT', symbol: 'PARENT', date: '2024-05-15',
-        transactionType: 'SPINOFF', quantity: 0, price: 0, currency: 'CAD', commission: 0, totalGrossAmount: 0,
-        totalNetAmount: 0, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 0, commissionCad: 0, totalOutlaysCad: 0,
+        transactionType: 'SPINOFF', quantity: '0', price: '0', currency: 'CAD', commission: '0', totalGrossAmount: '0',
+        totalNetAmount: '0', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '0', commissionCad: '0', totalOutlaysCad: '0',
         corporateAction: {
           treatment: 'INELIGIBLE_SPINOFF_TAXABLE_DIVIDEND',
           statutoryBasis: 'ITA s. 90 Foreign Dividend in Kind',
           brokerDescription: 'Spin-off: 1 SpinCo per Parent share',
           oldSecurityId: 'SEC_PARENT',
           newSecurityId: 'SEC_SPINCO',
-          newSharesReceived: 100,
-          newShareFmvPerShare: 20,
+          newSharesReceived: '100',
+          newShareFmvPerShare: '20',
         },
         status: 'approved', source: 'TEST_FIXTURE',
       },
@@ -636,7 +636,7 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const spinBal = out.securityBalances.get('SEC_SPINCO');
     const divIncome = out.incomeDistributions.dividendsCad;
 
-    const passed = parentBal?.totalAcbCad === 10000 && spinBal?.totalAcbCad === 2000 && divIncome === 2000;
+    const passed = Number(parentBal?.totalAcbCad) === 10000 && Number(spinBal?.totalAcbCad) === 2000 && Number(divIncome) === 2000;
 
     results.push({
       id: 'TEST_12',
@@ -665,17 +665,18 @@ export function runAllTestFixtures(): TestFixtureResult[] {
   {
     const start = performance.now();
     const txs: Transaction[] = [
-      { id: '1', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-01-01', transactionType: 'BUY', quantity: 100, price: 10, currency: 'CAD', commission: 0, totalGrossAmount: 1000, totalNetAmount: 1000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 1000, commissionCad: 0, totalOutlaysCad: 0, status: 'auto_approved', source: 'TEST_FIXTURE' },
-      { id: '2', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-02-01', transactionType: 'RETURN_OF_CAPITAL', quantity: 0, price: 0, currency: 'CAD', commission: 0, totalGrossAmount: 1100, totalNetAmount: 1100, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 1100, commissionCad: 0, totalOutlaysCad: 0, status: 'auto_approved', source: 'TEST_FIXTURE' }
+      { id: '1', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-01-01', transactionType: 'BUY', quantity: '100', price: '10', currency: 'CAD', commission: '0', totalGrossAmount: '1000', totalNetAmount: '1000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '1000', commissionCad: '0', totalOutlaysCad: '0', status: 'auto_approved', source: 'TEST_FIXTURE' },
+      { id: '2', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-02-01', transactionType: 'RETURN_OF_CAPITAL', quantity: '0', price: '0', currency: 'CAD', commission: '0', totalGrossAmount: '1100', totalNetAmount: '1100', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '1100', commissionCad: '0', totalOutlaysCad: '0', status: 'auto_approved', source: 'TEST_FIXTURE' }
     ];
     const out = runAcbEngine(txs, strictAccounts, strictSecurities);
     const bal = out.securityBalances.get('SEC1');
     const cg = out.totalNetRealizedGainLossCad;
-    const passed = bal?.totalAcbCad === 0 && cg === 100;
+    const passed = Number(bal?.totalAcbCad) === 0 && Number(cg) === 100;
     
     results.push({
       id: 'strict-1-roc-below-zero',
       name: 'ROC Reducing ACB Below Zero',
+      category: 'ROC & Distributions',
       description: 'A Return of Capital that exceeds the current ACB should reduce ACB to 0 and trigger an immediate capital gain for the excess.',
       statutoryCitations: ['ITA s. 53(2)(a)', 'ITA s. 40(3)'],
       passed,
@@ -690,19 +691,20 @@ export function runAllTestFixtures(): TestFixtureResult[] {
   {
     const start = performance.now();
     const txs: Transaction[] = [
-      { id: '1', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-01-01', transactionType: 'BUY', quantity: 100, price: 10, currency: 'CAD', commission: 0, totalGrossAmount: 1000, totalNetAmount: 1000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 1000, commissionCad: 0, totalOutlaysCad: 0, status: 'auto_approved', source: 'TEST_FIXTURE' },
-      { id: '2', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-02-01', transactionType: 'SELL', quantity: 100, price: 5, currency: 'CAD', commission: 0, totalGrossAmount: 500, totalNetAmount: 500, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 500, commissionCad: 0, totalOutlaysCad: 0, status: 'auto_approved', source: 'TEST_FIXTURE' },
-      { id: '3', accountId: 'TFSA_1', securityId: 'SEC1', symbol: 'ABC', date: '2024-02-05', transactionType: 'BUY', quantity: 100, price: 4, currency: 'CAD', commission: 0, totalGrossAmount: 400, totalNetAmount: 400, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 400, commissionCad: 0, totalOutlaysCad: 0, status: 'auto_approved', source: 'TEST_FIXTURE' }
+      { id: '1', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-01-01', transactionType: 'BUY', quantity: '100', price: '10', currency: 'CAD', commission: '0', totalGrossAmount: '1000', totalNetAmount: '1000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '1000', commissionCad: '0', totalOutlaysCad: '0', status: 'auto_approved', source: 'TEST_FIXTURE' },
+      { id: '2', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-02-01', transactionType: 'SELL', quantity: '100', price: '5', currency: 'CAD', commission: '0', totalGrossAmount: '500', totalNetAmount: '500', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '500', commissionCad: '0', totalOutlaysCad: '0', status: 'auto_approved', source: 'TEST_FIXTURE' },
+      { id: '3', accountId: 'TFSA_1', securityId: 'SEC1', symbol: 'ABC', date: '2024-02-05', transactionType: 'BUY', quantity: '100', price: '4', currency: 'CAD', commission: '0', totalGrossAmount: '400', totalNetAmount: '400', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '400', commissionCad: '0', totalOutlaysCad: '0', status: 'auto_approved', source: 'TEST_FIXTURE' }
     ];
-    const tfsaAccounts = [...strictAccounts, { id: 'TFSA_1', accountId: 'TFSA_1', name: 'TFSA', broker: 'IBKR', accountType: 'tfsa' as any, baseCurrency: 'CAD' as any, isHouseholdAffiliate: true }];
+    const tfsaAccounts: Account[] = [...strictAccounts, { id: 'TFSA_1', accountId: 'TFSA_1', name: 'TFSA', broker: 'IBKR', accountType: 'tfsa', baseCurrency: 'CAD', isHouseholdAffiliate: true }];
     const out = runAcbEngine(txs, tfsaAccounts, strictSecurities);
     const sl = out.superficialLosses[0];
     const cg = out.totalNetRealizedGainLossCad;
-    const passed = cg === 0 && sl?.isPermanentlyDeniedInRegistered === true && sl?.deniedLossCad === 500 && sl?.allowedLossCad === 0;
+    const passed = Number(cg) === 0 && sl?.isPermanentlyDeniedInRegistered === true && Number(sl?.deniedLossCad) === 500 && Number(sl?.allowedLossCad) === 0;
     
     results.push({
       id: 'strict-2-tfsa-sl',
       name: 'TFSA Superficial Loss Permanent Denial',
+      category: 'Superficial Losses',
       description: 'Repurchasing identical property in a registered account (TFSA/RRSP) triggers a superficial loss that is permanently denied.',
       statutoryCitations: ['ITA s. 54', 'ITA s. 40(2)(g)(i)'],
       passed,
@@ -717,16 +719,17 @@ export function runAllTestFixtures(): TestFixtureResult[] {
   {
     const start = performance.now();
     const txs: Transaction[] = [
-      { id: '2', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-01-01', transactionType: 'SELL', quantity: 100, price: 10, currency: 'CAD', commission: 0, totalGrossAmount: 1000, totalNetAmount: 1000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 1000, commissionCad: 0, totalOutlaysCad: 0, status: 'auto_approved', source: 'TEST_FIXTURE' },
-      { id: '1', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-01-01', transactionType: 'BUY', quantity: 100, price: 5, currency: 'CAD', commission: 0, totalGrossAmount: 500, totalNetAmount: 500, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 500, commissionCad: 0, totalOutlaysCad: 0, status: 'auto_approved', source: 'TEST_FIXTURE' }
+      { id: '2', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-01-01', transactionType: 'SELL', quantity: '100', price: '10', currency: 'CAD', commission: '0', totalGrossAmount: '1000', totalNetAmount: '1000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '1000', commissionCad: '0', totalOutlaysCad: '0', status: 'auto_approved', source: 'TEST_FIXTURE' },
+      { id: '1', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-01-01', transactionType: 'BUY', quantity: '100', price: '5', currency: 'CAD', commission: '0', totalGrossAmount: '500', totalNetAmount: '500', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '500', commissionCad: '0', totalOutlaysCad: '0', status: 'auto_approved', source: 'TEST_FIXTURE' }
     ];
     const out = runAcbEngine(txs, strictAccounts, strictSecurities);
     const cg = out.totalNetRealizedGainLossCad;
-    const passed = cg === 500;
+    const passed = Number(cg) === 500;
     
     results.push({
       id: 'strict-3-intraday',
       name: 'Intraday Ordering (Buy before Sell)',
+      category: 'Intraday Ordering',
       description: 'Acquisitions must be processed before dispositions occurring on the same day.',
       statutoryCitations: ['ITA s. 47(1)'],
       passed,
@@ -741,17 +744,16 @@ export function runAllTestFixtures(): TestFixtureResult[] {
   {
     const start = performance.now();
     const txs: Transaction[] = [
-      { id: '1', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-01-01', transactionType: 'BUY', quantity: 100, price: 10, currency: 'CAD', commission: 0, totalGrossAmount: 1000, totalNetAmount: 1000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 1000, commissionCad: 0, totalOutlaysCad: 0, status: 'auto_approved', source: 'TEST_FIXTURE' },
-      { id: '2', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-02-01', transactionType: 'MERGER_MIXED', quantity: 100, price: 0, currency: 'CAD', commission: 0, totalGrossAmount: 0, totalNetAmount: 0, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 0, commissionCad: 0, totalOutlaysCad: 0, status: 'needs_review', source: 'TEST_FIXTURE', corporateAction: { treatment: 'CUSTOM_OVERRIDE', statutoryBasis: '', brokerDescription: '', oldSecurityId: 'SEC1' } }
+      { id: '1', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-01-01', transactionType: 'BUY', quantity: '100', price: '10', currency: 'CAD', commission: '0', totalGrossAmount: '1000', totalNetAmount: '1000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '1000', commissionCad: '0', totalOutlaysCad: '0', status: 'auto_approved', source: 'TEST_FIXTURE' },
+      { id: '2', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-02-01', transactionType: 'MERGER_MIXED', quantity: '100', price: '0', currency: 'CAD', commission: '0', totalGrossAmount: '0', totalNetAmount: '0', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '0', commissionCad: '0', totalOutlaysCad: '0', status: 'needs_review', source: 'TEST_FIXTURE', corporateAction: { treatment: 'CUSTOM_OVERRIDE', statutoryBasis: '', brokerDescription: '', oldSecurityId: 'SEC1' } }
     ];
     const out = runAcbEngine(txs, strictAccounts, strictSecurities);
-    // When a transaction needs review, the engine must halt processing for that security
-    // and skip the transaction. The ledger should stop at the point before the CA.
     const passed = out.ledger.filter(l => l.transactionType === 'MERGER_MIXED').length === 0;
     
     results.push({
       id: 'strict-4-needs-review',
       name: 'Needs Review Blocks Ledger',
+      category: 'System Integrity',
       description: 'Transactions flagged as needs_review must not be automatically processed or forced through provisional math.',
       statutoryCitations: ['System Integrity'],
       passed,
@@ -767,19 +769,20 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const start = performance.now();
     const txs: Transaction[] = [
       // Sell 1 Put Contract
-      { id: '1', accountId: 'TAXABLE1', securityId: 'OPT1', symbol: 'ABC PUT', date: '2024-01-01', transactionType: 'SELL_TO_OPEN_OPT', quantity: 1, price: 2, currency: 'CAD', commission: 0, totalGrossAmount: 200, totalNetAmount: 200, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 200, commissionCad: 0, totalOutlaysCad: 0, status: 'auto_approved', source: 'TEST_FIXTURE' },
+      { id: '1', accountId: 'TAXABLE1', securityId: 'OPT1', symbol: 'ABC PUT', date: '2024-01-01', transactionType: 'SELL_TO_OPEN_OPT', quantity: '1', price: '2', currency: 'CAD', commission: '0', totalGrossAmount: '200', totalNetAmount: '200', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '200', commissionCad: '0', totalOutlaysCad: '0', status: 'auto_approved', source: 'TEST_FIXTURE' },
       // IBKR Flex sends BOTH the ASSIGNED_SHORT_PUT for the option AND the ASSIGNED_SHORT_PUT for the stock leg on the same day
-      { id: '2', accountId: 'TAXABLE1', securityId: 'OPT1', symbol: 'ABC PUT', date: '2024-02-01', transactionType: 'ASSIGNED_SHORT_PUT', quantity: 1, price: 0, currency: 'CAD', commission: 0, totalGrossAmount: 0, totalNetAmount: 0, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 0, commissionCad: 0, totalOutlaysCad: 0, status: 'auto_approved', source: 'TEST_FIXTURE' },
+      { id: '2', accountId: 'TAXABLE1', securityId: 'OPT1', symbol: 'ABC PUT', date: '2024-02-01', transactionType: 'ASSIGNED_SHORT_PUT', quantity: '1', price: '0', currency: 'CAD', commission: '0', totalGrossAmount: '0', totalNetAmount: '0', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '0', commissionCad: '0', totalOutlaysCad: '0', status: 'auto_approved', source: 'TEST_FIXTURE' },
       // This is the stock leg from parser:
-      { id: '3', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-02-01', transactionType: 'ASSIGNED_SHORT_PUT', quantity: 100, price: 50, currency: 'CAD', commission: 0, totalGrossAmount: 5000, totalNetAmount: 5000, fxRate: 1, fxRateSource: 'BANK_OF_CANADA', amountCad: 5000, commissionCad: 0, totalOutlaysCad: 0, status: 'auto_approved', source: 'TEST_FIXTURE' }
+      { id: '3', accountId: 'TAXABLE1', securityId: 'SEC1', symbol: 'ABC', date: '2024-02-01', transactionType: 'ASSIGNED_SHORT_PUT', quantity: '100', price: '50', currency: 'CAD', commission: '0', totalGrossAmount: '5000', totalNetAmount: '5000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '5000', commissionCad: '0', totalOutlaysCad: '0', status: 'auto_approved', source: 'TEST_FIXTURE' }
     ];
     const out = runAcbEngine(txs, strictAccounts, [{...strictSecurities[0]}, {id: 'OPT1', symbol: 'ABC PUT', name: 'ABC PUT', assetClass: 'OPT', currency: 'CAD', optionDetails: { underlyingSymbol: 'ABC', putOrCall: 'PUT', strike: 50, expiryDate: '2024-02-01', multiplier: 100 }}]);
     const bal = out.securityBalances.get('SEC1');
-    const passed = bal?.quantity === 100 && bal?.totalAcbCad === 4800; // Strike 5000 - 200 premium = 4800
+    const passed = Number(bal?.quantity) === 100 && Number(bal?.totalAcbCad) === 4800; // Strike 5000 - 200 premium = 4800
     
     results.push({
       id: 'strict-5-option-dedupe',
       name: 'Option Assignment Deduplication',
+      category: 'Options & Derivatives',
       description: 'IBKR assignment trades that send both OPT and STK legs must not double-count the share acquisition.',
       statutoryCitations: ['ITA s. 49(4)'],
       passed,

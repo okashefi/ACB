@@ -7,6 +7,7 @@ import { ReviewQueueView } from './components/ReviewQueueView';
 import { ConnectionsView } from './components/ConnectionsView';
 import { ReportsView } from './components/ReportsView';
 import { AccountsView } from './components/AccountsView';
+import { SettingsView } from './components/SettingsView';
 import { TestSuiteView } from './components/TestSuiteView';
 import { ManualEntryModal } from './components/ManualEntryModal';
 import { ImportModal } from './components/ImportModal';
@@ -22,6 +23,7 @@ import {
   FlexConnectorConfig,
   ReconciliationBreak,
   CorporateActionTreatment,
+  TaxSettings,
 } from './types/tax';
 
 const LOCAL_STORAGE_KEY = 'canadian_acb_data_v1';
@@ -47,6 +49,20 @@ export function App() {
     overlapDays: 3,
   });
 
+  const [taxSettings, setTaxSettings] = useState<TaxSettings>({
+    taxResidentCountry: 'CA',
+    province: 'ON',
+    defaultFxSource: 'BANK_OF_CANADA',
+    taxCharacter: 'capital',
+    isDayTraderWarningAcknowledged: false,
+    capitalGainsInclusionRate: '0.50',
+    inclusionRateRulesByYear: {
+      2024: { baseRate: '0.50', highThresholdRate: '0.6667', thresholdCad: '250000' },
+      2023: { baseRate: '0.50' },
+    },
+    cpaReviewDisclaimerAcknowledged: true,
+  });
+
   // Load from localStorage or seed initial sandbox demo data on first load
   useEffect(() => {
     try {
@@ -59,6 +75,7 @@ export function App() {
           setSecurities(parsed.securities || []);
           setOpenPositions(parsed.openPositions || []);
           if (parsed.flexConfig) setFlexConfig(parsed.flexConfig);
+          if (parsed.taxSettings) setTaxSettings(parsed.taxSettings);
           return;
         }
       }
@@ -82,13 +99,14 @@ export function App() {
             securities,
             openPositions,
             flexConfig,
+            taxSettings,
           })
         );
       } catch (e) {
         console.warn('Failed to persist to localStorage', e);
       }
     }
-  }, [transactions, accounts, securities, openPositions, flexConfig]);
+  }, [transactions, accounts, securities, openPositions, flexConfig, taxSettings]);
 
   // Load Sandbox Demo Data
   const loadSandboxDemoData = () => {
@@ -110,8 +128,8 @@ export function App() {
 
   // Replay Tax Engine
   const engineOutput = useMemo(() => {
-    return runAcbEngine(transactions, accounts, securities);
-  }, [transactions, accounts, securities]);
+    return runAcbEngine(transactions, accounts, securities, taxSettings);
+  }, [transactions, accounts, securities, taxSettings]);
 
   // Available Tax Years derived from transactions
   const availableTaxYears = useMemo(() => {
@@ -127,6 +145,29 @@ export function App() {
   const pendingReviewCount = useMemo(() => {
     return transactions.filter((t) => t.status === 'needs_review').length;
   }, [transactions]);
+
+
+
+  useEffect(() => {
+    fetch('/api/ibkr/config')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.isConfigured) {
+          setFlexConfig((prev) => {
+            const next = {
+              ...prev,
+              tokenLast4: data.tokenLast4,
+              queryId: data.queryId || prev.queryId,
+              status: prev.status === 'UNCONFIGURED' ? 'CONFIGURED' : prev.status,
+            };
+            delete next.token; // Ensure plaintext token is not kept
+            return next;
+          });
+        }
+      })
+      .catch(console.error);
+  }, []);
+
 
   // Reconciliation Breaks Check (Calculated share balances vs IBKR Open Positions)
   const reconciliationBreaks = useMemo<ReconciliationBreak[]>(() => {
@@ -144,10 +185,10 @@ export function App() {
           breaks.push({
             securityId: bal.securityId,
             symbol: bal.symbol,
-            calculatedQuantity: bal.quantity,
-            brokerReportedQuantity: brokerReported,
-            quantityDiscrepancy: bal.quantity - brokerReported,
-            calculatedAcbCad: bal.totalAcbCad,
+            calculatedQuantity: bal.quantity.toString(),
+            brokerReportedQuantity: brokerReported.toString(),
+            quantityDiscrepancy: (bal.quantity - brokerReported).toString(),
+            calculatedAcbCad: bal.totalAcbCad.toString(),
             status: 'QUANTITY_BREAK',
             explanation: `Calculated quantity (${bal.quantity}) differs from IBKR Open Position (${brokerReported})`,
           });
@@ -162,44 +203,101 @@ export function App() {
   const handleTriggerSync = async (isBackfill = false) => {
     setIsSyncing(true);
     try {
-      const res = await fetchIbkrFlexStatement({
-        token: flexConfig.token || 'DEMO_SANDBOX_TOKEN',
-        queryId: flexConfig.queryId || 'AF_CANADIAN_ACB',
-        useSandbox: !flexConfig.token || flexConfig.token.startsWith('DEMO_'),
-      });
+      const isSandbox = !flexConfig.tokenLast4 && (!flexConfig.token || flexConfig.token.startsWith('DEMO_'));
+      
+      const fetchChunk = async (startDate?: string, endDate?: string) => {
+        return await fetchIbkrFlexStatement({
+          token: isSandbox ? 'DEMO_SANDBOX_TOKEN' : flexConfig.token || '',
+          queryId: flexConfig.queryId || 'AF_CANADIAN_ACB',
+          useSandbox: isSandbox,
+          startDate,
+          endDate,
+        });
+      };
 
-      if (res.success && res.parsedData) {
+      let results = [];
+      
+      if (isBackfill && !isSandbox) {
+        // Year-by-year backfill for the last 5 years up to today
+        const currentYear = new Date().getFullYear();
+        for (let year = currentYear - 5; year <= currentYear; year++) {
+          const startDate = `${year}0101`;
+          const endDate = year === currentYear ? new Date().toISOString().slice(0, 10).replace(/-/g, '') : `${year}1231`;
+          const res = await fetchChunk(startDate, endDate);
+          if (res.success && res.parsedData) {
+            results.push(res);
+          } else if (res.errorCode === '1018') {
+             alert(`Year ${year} is older than Flex retention. Please import an opening ACB or use the CSV fallback for older data. Never clobbering an empty year.`);
+          } else if (!res.success) {
+             throw new Error(res.errorMessage || 'Unknown sync error');
+          }
+        }
+      } else {
+        // Incremental: last 3 days
+        const end = new Date();
+        const start = new Date(end.getTime() - 3 * 24 * 60 * 60 * 1000);
+        const startDate = start.toISOString().slice(0, 10).replace(/-/g, '');
+        const endDate = end.toISOString().slice(0, 10).replace(/-/g, '');
+        const res = await fetchChunk(startDate, endDate);
+        if (res.success) {
+          results.push(res);
+        } else {
+          throw new Error(res.errorMessage || 'Unknown sync error');
+        }
+      }
+
+      if (results.length > 0) {
+        const allParsed = results.map(r => r.parsedData).filter((p): p is NonNullable<typeof p> => Boolean(p));
+        
         // Merge accounts
         setAccounts((prev) => {
           const map = new Map(prev.map((a) => [a.id, a]));
-          res.parsedData!.accounts.forEach((a) => map.set(a.id, a));
+          allParsed.forEach(parsed => parsed.accounts.forEach((a) => map.set(a.id, a)));
           return Array.from(map.values());
         });
 
         // Merge securities
         setSecurities((prev) => {
           const map = new Map(prev.map((s) => [s.id, s]));
-          res.parsedData!.securities.forEach((s) => map.set(s.id, s));
+          allParsed.forEach(parsed => parsed.securities.forEach((s) => map.set(s.id, s)));
           return Array.from(map.values());
         });
 
-        // Merge transactions (deduplicating by ID)
-        setTransactions((prev) => {
-          const map = new Map(prev.map((t) => [t.id, t]));
-          res.parsedData!.transactions.forEach((t) => map.set(t.id, t));
+        // Merge transactions (deduplicating by ID) -> Cancellations void the original. Idempotent upsert.
+        setTransactions((prev: Transaction[]) => {
+          const map = new Map<string, Transaction>(prev.map((t) => [t.id, t]));
+          
+          allParsed.forEach(parsed => {
+            parsed.transactions.forEach((t: Transaction) => {
+              // Handle cancellations (often marked in XML but let's assume we remove if cancelled or we overwrite)
+              if (t.isCancelled) {
+                 map.delete(t.id);
+                 return;
+              }
+              // Clobber protection for user CA
+              const existing = map.get(t.id);
+              if (existing && existing.status === 'approved' && existing.corporateAction && t.status === 'needs_review') {
+                t.status = 'approved';
+                t.corporateAction = existing.corporateAction;
+              }
+              map.set(t.id, t);
+            });
+          });
+          
           return Array.from(map.values()).sort((a: Transaction, b: Transaction) => a.date.localeCompare(b.date));
         });
 
-        setOpenPositions(res.parsedData.openPositions);
+        // Use open positions from the most recent result
+        if (allParsed.length > 0) {
+          setOpenPositions(allParsed[allParsed.length - 1].openPositions);
+        }
 
         setFlexConfig((prev) => ({
           ...prev,
           status: 'CONNECTED',
           lastSyncTimestamp: new Date().toISOString(),
-          lastSyncReferenceCode: res.referenceCode,
+          lastSyncReferenceCode: results[results.length - 1].referenceCode,
         }));
-      } else {
-        alert(`IBKR Sync: ${res.errorMessage || 'Unknown sync error'}`);
       }
     } catch (e: any) {
       alert(`Sync error: ${e.message}`);
@@ -324,6 +422,7 @@ export function App() {
           <ReviewQueueView
             transactions={transactions}
             securities={securities}
+            reconciliationBreaks={reconciliationBreaks}
             onConfirmTreatment={handleConfirmTreatment}
           />
         )}
@@ -354,6 +453,14 @@ export function App() {
             securities={securities}
             onAddAccount={(acc) => setAccounts((prev) => [...prev, acc])}
             onUpdateAccount={(acc) => setAccounts((prev) => prev.map((a) => (a.id === acc.id ? acc : a)))}
+          />
+        )}
+
+        {activeTab === 'settings' && (
+          <SettingsView
+            settings={taxSettings}
+            onUpdateSettings={setTaxSettings}
+            affiliateAccountsCount={accounts.filter((a) => a.isHouseholdAffiliate).length}
           />
         )}
 

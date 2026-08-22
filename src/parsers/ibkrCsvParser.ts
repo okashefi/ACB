@@ -61,6 +61,97 @@ export function parseIbkrCsv(csvContent: string): ParsedCsvResult {
 
     // Process section rows
     if (row[1] === 'Data' || (row.length > 5 && (row[2]?.includes('-') || row[2]?.includes('/')))) {
+
+      // Cash row
+      if (currentSection === 'CASH' || (!currentSection && row.join(' ').toUpperCase().includes('DIVIDEND'))) {
+        try {
+          const symIdx = sectionHeaders.findIndex((h) => h.toLowerCase().includes('symbol')) || 4;
+          const dateIdx = sectionHeaders.findIndex((h) => h.toLowerCase().includes('date')) || 3;
+          const amtIdx = sectionHeaders.findIndex((h) => h.toLowerCase().includes('amount')) || 5;
+          const currIdx = sectionHeaders.findIndex((h) => h.toLowerCase().includes('currency')) || 9;
+          
+          const symbol = (row[symIdx] || row[4] || '').trim();
+          const rawDate = (row[dateIdx] || row[3] || '').trim();
+          const date = rawDate.replace(/\//g, '-').substring(0, 10);
+          const amount = parseFloat(row[amtIdx] || row[5] || '0').toString();
+          const currency = (row[currIdx] || row[9] || 'USD').trim().toUpperCase() || 'USD';
+          
+          if (symbol && date && amount !== '0') {
+            const secId = `SYM_${symbol}`;
+            const { amountCad, fxRate, fxSource } = convertToCad(parseFloat(amount), currency, date);
+            
+            transactions.push({
+              id: `CSV_CASH_${i}_${symbol}_${date}`,
+              accountId: 'U_DEFAULT',
+              securityId: secId,
+              symbol,
+              date,
+              transactionType: 'DIVIDEND_CASH',
+              quantity: '0',
+              price: '0',
+              currency,
+              commission: '0',
+              totalGrossAmount: amount,
+              totalNetAmount: amount,
+              fxRate: String(fxRate),
+              fxRateSource: fxSource,
+              amountCad: String(amountCad),
+              commissionCad: '0',
+              totalOutlaysCad: '0',
+              status: 'auto_approved',
+              source: 'IBKR_CSV',
+            });
+          }
+        } catch (e) {
+          errors.push(`Row ${i}: Failed to parse cash transaction`);
+        }
+      }
+      
+      // Corporate Action row
+      if (currentSection === 'CORPORATE_ACTIONS') {
+        try {
+          const symIdx = sectionHeaders.findIndex((h) => h.toLowerCase().includes('symbol')) || 4;
+          const dateIdx = sectionHeaders.findIndex((h) => h.toLowerCase().includes('date')) || 3;
+          const descIdx = sectionHeaders.findIndex((h) => h.toLowerCase().includes('description')) || 5;
+          const qtyIdx = sectionHeaders.findIndex((h) => h.toLowerCase().includes('qty') || h.toLowerCase().includes('quantity')) || 6;
+          
+          const symbol = (row[symIdx] || row[4] || '').trim();
+          const rawDate = (row[dateIdx] || row[3] || '').trim();
+          const date = rawDate.replace(/\//g, '-').substring(0, 10);
+          const desc = (row[descIdx] || row[5] || '').trim();
+          const qty = parseFloat(row[qtyIdx] || row[6] || '0').toString();
+          
+          if (symbol && date && desc) {
+            const secId = `SYM_${symbol}`;
+            
+            transactions.push({
+              id: `CSV_CA_${i}_${symbol}_${date}`,
+              accountId: 'U_DEFAULT',
+              securityId: secId,
+              symbol,
+              date,
+              transactionType: 'MERGER_MIXED',
+              quantity: qty,
+              price: '0',
+              currency: 'CAD',
+              commission: '0',
+              totalGrossAmount: '0',
+              totalNetAmount: '0',
+              fxRate: '1',
+              fxRateSource: 'BANK_OF_CANADA',
+              amountCad: '0',
+              commissionCad: '0',
+              totalOutlaysCad: '0',
+              status: 'needs_review',
+              source: 'IBKR_CSV',
+              ibkrCode: desc,
+            });
+          }
+        } catch (e) {
+          errors.push(`Row ${i}: Failed to parse corporate action`);
+        }
+      }
+
       // Trades row
       if (currentSection === 'TRADES' || (!currentSection && (row.includes('BUY') || row.includes('BOT') || row.includes('SLD')))) {
         try {
@@ -103,17 +194,17 @@ export function parseIbkrCsv(csvContent: string): ParsedCsvResult {
               symbol,
               date,
               transactionType: buySell === 'BUY' ? 'BUY' : 'SELL',
-              quantity: qty,
-              price,
+              quantity: String(qty),
+              price: String(price),
               currency,
-              commission: comm,
-              totalGrossAmount: gross,
-              totalNetAmount: gross + (buySell === 'BUY' ? comm : -comm),
-              fxRate,
+              commission: String(comm),
+              totalGrossAmount: String(gross),
+              totalNetAmount: String(gross + (buySell === 'BUY' ? comm : -comm)),
+              fxRate: String(fxRate),
               fxRateSource: fxSource,
-              amountCad,
-              commissionCad: commCad,
-              totalOutlaysCad: commCad,
+              amountCad: String(amountCad),
+              commissionCad: String(commCad),
+              totalOutlaysCad: String(commCad),
               status: 'auto_approved',
               source: 'IBKR_CSV',
             });

@@ -87,12 +87,6 @@ export function generateSandboxFlexXml(): string {
       </CashTransactions>
 
       <OpenPositions>
-        <OpenPosition accountId="U1084829" symbol="RY" conid="12345" position="100" costBasisPrice="132.33" markPrice="168.50" positionValue="16850.00" currency="CAD" fifoPnlUnrealized="3617.00" />
-        <OpenPosition accountId="U1084829" symbol="AAPL" conid="34567" position="25" costBasisPrice="180.00" markPrice="235.00" positionValue="5875.00" currency="USD" fifoPnlUnrealized="1375.00" />
-        <OpenPosition accountId="U1084829" symbol="NVDA" conid="45678" position="40" costBasisPrice="250.00" markPrice="125.00" positionValue="5000.00" currency="USD" fifoPnlUnrealized="-5000.00" />
-        <OpenPosition accountId="U1084829" symbol="SHOP" conid="23456" position="100" costBasisPrice="78.00" markPrice="105.00" positionValue="10500.00" currency="CAD" fifoPnlUnrealized="2700.00" />
-        <OpenPosition accountId="U1084829" symbol="REIT.UN" conid="56789" position="200" costBasisPrice="15.00" markPrice="16.20" positionValue="3240.00" currency="CAD" fifoPnlUnrealized="240.00" />
-        <OpenPosition accountId="U1084829" symbol="ACQ" conid="78901" position="50" costBasisPrice="30.00" markPrice="32.00" positionValue="1600.00" currency="USD" fifoPnlUnrealized="100.00" />
       </OpenPositions>
 
     </FlexStatement>
@@ -135,7 +129,29 @@ export async function fetchIbkrFlexStatement(options: FlexSyncOptions): Promise<
       };
     }
 
+
     const parsed = parseIbkrFlexXml(data.statementXml);
+    
+    const required = [
+      { name: 'Trades (Executions)', ok: parsed.hasTradesSection },
+      { name: 'Cash Transactions', ok: parsed.hasCashTransactionsSection },
+      { name: 'Corporate Actions', ok: parsed.hasCorporateActionsSection },
+      { name: 'Transfers', ok: parsed.hasTransfersSection },
+      { name: 'Option Exercises', ok: parsed.hasOptionExercisesSection },
+      { name: 'Open Positions', ok: parsed.hasOpenPositionsSection },
+      { name: 'Financial Instrument Information', ok: parsed.hasFinancialInstrumentInformationSection },
+      { name: 'Account Information', ok: parsed.hasAccountInformationSection },
+      { name: 'Conversion Details', ok: parsed.hasConversionDetailsSection }
+    ];
+
+    const missing = required.filter(s => !s.ok).map(s => s.name);
+    if (missing.length > 0 && !isDemo && !data.statementXml.includes('SANDBOX_REF')) { // Ignore strict validation for sandbox
+      return {
+        success: false,
+        errorMessage: 'IBKR Flex Web Service configuration is missing required sections: ' + missing.join(', ') + '. Please configure these sections in IBKR Portal.',
+      };
+    }
+
     return {
       success: true,
       referenceCode: data.referenceCode,

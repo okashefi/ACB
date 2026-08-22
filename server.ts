@@ -24,14 +24,37 @@ async function startServer() {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
+
+  // API: IBKR Config
+  app.get('/api/ibkr/config', (req, res) => {
+    const token = process.env.IBKR_FLEX_TOKEN;
+    const queryId = process.env.IBKR_FLEX_QUERY_ID;
+    
+    if (token) {
+      res.json({
+        isConfigured: true,
+        tokenLast4: token.substring(token.length - 4),
+        queryId: queryId || '',
+      });
+    } else {
+      res.json({
+        isConfigured: false,
+        tokenLast4: '',
+        queryId: '',
+      });
+    }
+  });
+
   // API 2: IBKR Flex Web Service Sync Proxy
   app.post('/api/ibkr/flex-sync', async (req, res) => {
-    const { token, queryId, startDate, endDate } = req.body;
+    const { startDate, endDate } = req.body;
+    const token = process.env.IBKR_FLEX_TOKEN || req.body.token; // fallback if needed, but prefer env
+    const queryId = process.env.IBKR_FLEX_QUERY_ID || req.body.queryId;
 
     if (!token || !queryId) {
       return res.status(400).json({
         success: false,
-        errorMessage: 'Token and Query ID are required.',
+        errorMessage: 'IBKR Flex Token and Query ID are required. Please configure them in settings.',
       });
     }
 
