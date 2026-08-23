@@ -16,3 +16,56 @@
     color: #F4F4F5;
   }
 }
+
+/* Custom app header layout classes to strictly prevent collisions */
+.appHeaderInner {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 72px;
+  padding: 0 24px;
+}
+
+.brandCluster {
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.primaryNav {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: center;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+/* Widths below 1440px media query */
+@media (max-width: 1439px) {
+  .appHeaderInner {
+    grid-template-columns: 150px minmax(0, 1fr) auto;
+  }
+}
+
+/* Widths below 1180px media query */
+@media (max-width: 1179px) {
+  .appHeaderInner {
+    display: flex;
+    justify-content: space-between;
+    min-height: 72px;
+    padding: 0 16px;
+  }
+  .primaryNav {
+    display: none !important;
+  }
+}
