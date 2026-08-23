@@ -351,6 +351,19 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
     }
 
     // 1. Account Information
+    const stmtAcctId = getAttr(stmt, 'accountId', 'account');
+    if (stmtAcctId && stmtAcctId !== 'U_DEFAULT' && !accountsMap.has(stmtAcctId)) {
+      accountsMap.set(stmtAcctId, {
+        id: stmtAcctId,
+        accountId: stmtAcctId,
+        name: `IBKR ${stmtAcctId} (TAXABLE)`,
+        broker: 'IBKR',
+        accountType: 'taxable',
+        baseCurrency: 'CAD',
+        isHouseholdAffiliate: false,
+      });
+    }
+
     const acctInfoList: any[] = [];
     if (stmt.AccountInformation?.AccountInfo !== undefined) {
       acctInfoList.push(...toArray(stmt.AccountInformation.AccountInfo));
@@ -363,7 +376,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
     }
 
     for (const info of acctInfoList) {
-      const acctId = getAttr(info, 'accountId', 'account') || 'U_DEFAULT';
+      const acctId = getAttr(info, 'accountId', 'account') || stmtAcctId || 'U_DEFAULT';
       const alias = getAttr(info, 'acctAlias', 'accountAlias', 'accountTitle') || acctId;
       const currency = getAttr(info, 'currency', 'baseCurrency') || 'CAD';
       const typeStr = getAttr(info, 'type', 'accountType').toUpperCase();
@@ -926,6 +939,8 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
       baseCurrency: 'CAD',
       isHouseholdAffiliate: false,
     });
+  } else if (accountsMap.size > 1 && accountsMap.has('U_DEFAULT')) {
+    accountsMap.delete('U_DEFAULT');
   }
 
   const rawReferenceCode =

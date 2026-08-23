@@ -66,7 +66,7 @@ export function App() {
     cpaReviewDisclaimerAcknowledged: false,
   });
 
-  // Load from localStorage or seed initial sandbox demo data on first load
+  // Load from localStorage on first load (do not seed demo accounts automatically)
   useEffect(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -80,20 +80,24 @@ export function App() {
           if (parsed.flexConfig) setFlexConfig(parsed.flexConfig);
           if (parsed.taxSettings) setTaxSettings(parsed.taxSettings);
           return;
+        } else if (parsed.accounts && parsed.accounts.length > 0) {
+          setAccounts(parsed.accounts);
+          setSecurities(parsed.securities || []);
+          setOpenPositions(parsed.openPositions || []);
+          if (parsed.flexConfig) setFlexConfig(parsed.flexConfig);
+          if (parsed.taxSettings) setTaxSettings(parsed.taxSettings);
+          return;
         }
       }
     } catch (e) {
       console.warn('Failed to load state from localStorage', e);
     }
-
-    // Default: Load realistic multi-year sandbox data immediately
-    loadSandboxDemoData();
   }, []);
 
   // Save to localStorage
   useEffect(() => {
-    if (transactions.length > 0) {
-      try {
+    try {
+      if (transactions.length > 0 || accounts.length > 0) {
         localStorage.setItem(
           LOCAL_STORAGE_KEY,
           JSON.stringify({
@@ -105,9 +109,11 @@ export function App() {
             taxSettings,
           })
         );
-      } catch (e) {
-        console.warn('Failed to persist to localStorage', e);
+      } else {
+        localStorage.removeItem(LOCAL_STORAGE_KEY);
       }
+    } catch (e) {
+      console.warn('Failed to persist to localStorage', e);
     }
   }, [transactions, accounts, securities, openPositions, flexConfig, taxSettings]);
 
@@ -148,6 +154,32 @@ export function App() {
   const pendingReviewCount = useMemo(() => {
     return transactions.filter((t) => t.status === 'needs_review').length;
   }, [transactions]);
+
+  // Active account IDs referenced by current transactions or open positions
+  const activeAccountIds = useMemo(() => {
+    const ids = new Set<string>();
+    transactions.forEach((t) => { if (t.accountId) ids.add(t.accountId); });
+    openPositions.forEach((p) => { if (p.accountId) ids.add(p.accountId); });
+    return ids;
+  }, [transactions, openPositions]);
+
+  // Displayed accounts: only accounts present in current transactions/import
+  const displayedAccounts = useMemo(() => {
+    if (activeAccountIds.size > 0) {
+      const filtered = accounts.filter((a) => activeAccountIds.has(a.id) || activeAccountIds.has(a.accountId));
+      if (filtered.length > 0) return filtered;
+      return Array.from(activeAccountIds).map((id) => ({
+        id,
+        accountId: id,
+        name: `IBKR ${id} (TAXABLE)`,
+        broker: 'IBKR',
+        accountType: 'taxable' as const,
+        baseCurrency: 'CAD',
+        isHouseholdAffiliate: false,
+      }));
+    }
+    return accounts;
+  }, [accounts, activeAccountIds]);
 
 
 
@@ -227,23 +259,24 @@ export function App() {
       if (results.length > 0) {
         const allParsed = results.map(r => r.parsedData).filter((p): p is NonNullable<typeof p> => Boolean(p));
         
-        // Merge accounts
-        setAccounts((prev) => {
-          const map = new Map(prev.map((a) => [a.id, a]));
-          allParsed.forEach(parsed => parsed.accounts.forEach((a) => map.set(a.id, a)));
-          return Array.from(map.values());
+        // Rule 1 & 2: Replace accounts strictly with accounts present in the sync results (no leftover demo accounts)
+        const syncAccountsMap = new Map<string, Account>();
+        allParsed.forEach(parsed => {
+          parsed.accounts.forEach((a) => syncAccountsMap.set(a.id, a));
         });
+        setAccounts(Array.from(syncAccountsMap.values()));
 
-        // Merge securities
-        setSecurities((prev) => {
-          const map = new Map(prev.map((s) => [s.id, s]));
-          allParsed.forEach(parsed => parsed.securities.forEach((s) => map.set(s.id, s)));
-          return Array.from(map.values());
+        // Extract securities strictly from the sync results
+        const syncSecuritiesMap = new Map<string, SecurityMaster>();
+        allParsed.forEach(parsed => {
+          parsed.securities.forEach((s) => syncSecuritiesMap.set(s.id, s));
         });
+        setSecurities(Array.from(syncSecuritiesMap.values()));
 
         // Merge transactions (deduplicating by ID) -> Cancellations void the original. Idempotent upsert.
         setTransactions((prev: Transaction[]) => {
-          const map = new Map<string, Transaction>(prev.map((t) => [t.id, t]));
+          const isPrevDemo = prev.some(t => t.accountId === 'U1084829' || t.accountId === 'U1084830');
+          const map = new Map<string, Transaction>(isPrevDemo ? [] : prev.map((t) => [t.id, t]));
           
           allParsed.forEach(parsed => {
             parsed.transactions.forEach((t: Transaction) => {
@@ -299,24 +332,11 @@ export function App() {
     securities: SecurityMaster[];
     openPositions: OpenPosition[];
   }) => {
-    setAccounts((prev) => {
-      const map = new Map(prev.map((a) => [a.id, a]));
-      data.accounts.forEach((a) => map.set(a.id, a));
-      return Array.from(map.values());
-    });
-    setSecurities((prev) => {
-      const map = new Map(prev.map((s) => [s.id, s]));
-      data.securities.forEach((s) => map.set(s.id, s));
-      return Array.from(map.values());
-    });
-    setTransactions((prev) => {
-      const map = new Map(prev.map((t) => [t.id, t]));
-      data.transactions.forEach((t) => map.set(t.id, t));
-      return Array.from(map.values()).sort((a: Transaction, b: Transaction) => a.date.localeCompare(b.date));
-    });
-    if (data.openPositions.length > 0) {
-      setOpenPositions(data.openPositions);
-    }
+    // Rule 1 & 2: Replace accounts directly with those in the imported statement
+    setAccounts(data.accounts);
+    setSecurities(data.securities);
+    setTransactions(data.transactions.sort((a: Transaction, b: Transaction) => a.date.localeCompare(b.date)));
+    setOpenPositions(data.openPositions || []);
   };
 
   // Corporate Action review confirmation
@@ -428,7 +448,7 @@ export function App() {
 
         {activeTab === 'accounts' && (
           <AccountsView
-            accounts={accounts}
+            accounts={displayedAccounts}
             securities={securities}
             onAddAccount={(acc) => setAccounts((prev) => [...prev, acc])}
             onUpdateAccount={(acc) => setAccounts((prev) => prev.map((a) => (a.id === acc.id ? acc : a)))}
@@ -439,7 +459,7 @@ export function App() {
           <SettingsView
             settings={taxSettings}
             onUpdateSettings={setTaxSettings}
-            affiliateAccountsCount={accounts.filter((a) => a.isHouseholdAffiliate).length}
+            affiliateAccountsCount={displayedAccounts.filter((a) => a.isHouseholdAffiliate).length}
           />
         )}
 
@@ -451,7 +471,7 @@ export function App() {
       <ManualEntryModal
         isOpen={isManualEntryOpen}
         onClose={() => setIsManualEntryOpen(false)}
-        accounts={accounts}
+        accounts={displayedAccounts}
         securities={securities}
         onAddTransaction={handleAddTransaction}
       />

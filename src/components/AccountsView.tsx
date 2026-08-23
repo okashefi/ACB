@@ -72,7 +72,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
               <label className="block text-[#71717A] mb-1">Account Number / ID</label>
               <input
                 type="text"
-                placeholder="e.g. U1084831 or RBC-1234"
+                placeholder="e.g. U1234567 or RBC-1234"
                 value={newAccId}
                 onChange={(e) => setNewAccId(e.target.value)}
                 required

@@ -107,7 +107,7 @@ export function generateSandboxFlexXml(): string {
  * Execute Flex Web Service SendRequest and GetStatement via server proxy or sandbox.
  */
 export async function fetchIbkrFlexStatement(options: FlexSyncOptions): Promise<FlexSyncResult> {
-  const isDemo = options.useSandbox || options.token === 'DEMO_SANDBOX_TOKEN' || options.token.startsWith('DEMO_') || !options.token;
+  const isDemo = options.useSandbox === true || options.token === 'DEMO_SANDBOX_TOKEN' || (Boolean(options.token) && options.token.startsWith('DEMO_'));
 
   if (isDemo) {
     // Return realistic mock sandbox data
@@ -118,6 +118,14 @@ export async function fetchIbkrFlexStatement(options: FlexSyncOptions): Promise<
       referenceCode: 'SANDBOX_REF_987654321',
       statementXml: xml,
       parsedData: parsed,
+    };
+  }
+
+  if (!options.token) {
+    return {
+      success: false,
+      errorMessage: 'Flex Web Service Token is required. Please configure your IBKR token or load sandbox demo data.',
+      errorCode: 'NO_TOKEN',
     };
   }
 
