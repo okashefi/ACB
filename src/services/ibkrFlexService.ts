@@ -140,17 +140,29 @@ export async function fetchIbkrFlexStatement(options: FlexSyncOptions): Promise<
 
 
     const parsed = parseIbkrFlexXml(data.statementXml);
+
+    if (parsed.hasDateParseError) {
+      return {
+        success: false,
+        errorMessage: 'In General Configuration set Date Format to yyyy-MM-dd.',
+      };
+    }
+
+    if (parsed.hasLotBreakout) {
+      return {
+        success: false,
+        errorMessage: 'In Trades choose Executions only; in General Configuration do not include lot breakout.',
+      };
+    }
     
     const required = [
       { name: 'Trades (Detail level: Execution)', ok: parsed.hasTradesSection },
       { name: 'Cash Transactions', ok: parsed.hasCashTransactionsSection },
       { name: 'Corporate Actions', ok: parsed.hasCorporateActionsSection },
       { name: 'Transfers', ok: parsed.hasTransfersSection },
-      { name: 'Option Exercises, Assignments and Expirations', ok: parsed.hasOptionExercisesSection },
       { name: 'Open Positions', ok: parsed.hasOpenPositionsSection },
       { name: 'Financial Instrument Information', ok: parsed.hasFinancialInstrumentInformationSection },
       { name: 'Account Information', ok: parsed.hasAccountInformationSection },
-      { name: 'Conversion Details', ok: parsed.hasConversionDetailsSection }
     ];
 
     const missing = required.filter(s => !s.ok).map(s => s.name);
@@ -158,7 +170,7 @@ export async function fetchIbkrFlexStatement(options: FlexSyncOptions): Promise<
       if (!parsed.hasTradesSection) {
         return {
           success: false,
-          errorMessage: 'Open the Trades section and set detail level to Execution, then Select All. Executions is not a separate section.',
+          errorMessage: 'Open Sections → Trades. In the panel dropdown choose Executions, then Select All. Executions is not its own section.',
         };
       }
       return {
@@ -167,11 +179,18 @@ export async function fetchIbkrFlexStatement(options: FlexSyncOptions): Promise<
       };
     }
 
+    let retentionWarning = data.retentionWarning;
+    if (!parsed.hasOptionExercisesSection) {
+      const optWarn = 'Option exercise/assignment history may be incomplete; Trades codes A/Ex/Ep will still be used.';
+      retentionWarning = retentionWarning ? `${retentionWarning} ${optWarn}` : optWarn;
+    }
+
     return {
       success: true,
       referenceCode: data.referenceCode,
       statementXml: data.statementXml,
       parsedData: parsed,
+      retentionWarning,
     };
   } catch (err: any) {
     return {

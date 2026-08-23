@@ -20,6 +20,8 @@ export interface ParsedFlexStatement {
   hasConversionDetailsSection: boolean;
   hasOptionExercisesSection: boolean;
   hasTransfersSection: boolean;
+  hasLotBreakout?: boolean;
+  hasDateParseError?: boolean;
   errors: string[];
 }
 
@@ -62,6 +64,8 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
   let hasConversionDetailsSection = false;
   let hasOptionExercisesSection = false;
   let hasTransfersSection = false;
+  let hasLotBreakout = false;
+  let hasDateParseError = false;
 
 
   const toArray = (obj: any): any[] => {
@@ -147,9 +151,13 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
       });
     }
 
+    // Check for lot breakout tags
+    if (stmt.Trades?.Order !== undefined || stmt.Trades?.Lot !== undefined || stmt.Trades?.ClosedLot !== undefined || stmt.ClosedLots !== undefined || stmt.Orders !== undefined) {
+      hasLotBreakout = true;
+    }
+
     // 3. Trades (Executions)
     const tradesList = toArray(stmt.Trades?.Trade || stmt.Trades?.Execution);
-    if (tradesList.length > 0) hasTradesSection = true;
     if (tradesList.length > 0) hasTradesSection = true;
 
     for (const t of tradesList) {
@@ -158,7 +166,13 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
       const conid = t.conid || t.conId || '';
       const secId = conid ? `CON_${conid}` : `SYM_${symbol}`;
       const rawDate = t.tradeDate || t.dateTime?.substring(0, 10) || '';
-      const date = rawDate.replace(/\//g, '-');
+      
+      let date = rawDate.replace(/\//g, '-');
+      if (/^\d{8}$/.test(rawDate)) {
+        date = `${rawDate.substring(0, 4)}-${rawDate.substring(4, 6)}-${rawDate.substring(6, 8)}`;
+      } else if (rawDate && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        hasDateParseError = true;
+      }
       const qty = Math.abs(parseFloat(t.quantity || '0'));
       const price = parseFloat(t.tradePrice || t.price || '0');
       const currency = t.currency || 'USD';
@@ -555,6 +569,8 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
     hasConversionDetailsSection,
     hasOptionExercisesSection,
     hasTransfersSection,
+    hasLotBreakout,
+    hasDateParseError,
     errors,
   };
 
