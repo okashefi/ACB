@@ -8,13 +8,12 @@ import { ConnectionsView } from './components/ConnectionsView';
 import { ReportsView } from './components/ReportsView';
 import { AccountsView } from './components/AccountsView';
 import { SettingsView } from './components/SettingsView';
-import { TestSuiteView } from './components/TestSuiteView';
 import { ManualEntryModal } from './components/ManualEntryModal';
 import { ImportModal } from './components/ImportModal';
 import { HelpView } from './components/HelpView';
 import { runAcbEngine, reconcilePositions } from './engine/acbEngine';
 import { d } from './engine/decimal';
-import { fetchIbkrFlexStatement, generateSandboxFlexXml } from './services/ibkrFlexService';
+import { fetchIbkrFlexStatement } from './services/ibkrFlexService';
 import { parseIbkrFlexXml } from './parsers/ibkrFlexXmlParser';
 import {
   Transaction,
@@ -66,7 +65,7 @@ export function App() {
     cpaReviewDisclaimerAcknowledged: false,
   });
 
-  // Load from localStorage on first load (do not seed demo accounts automatically)
+  // Load from localStorage on first load
   useEffect(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -116,24 +115,6 @@ export function App() {
       console.warn('Failed to persist to localStorage', e);
     }
   }, [transactions, accounts, securities, openPositions, flexConfig, taxSettings]);
-
-  // Load Sandbox Demo Data
-  const loadSandboxDemoData = () => {
-    const xml = generateSandboxFlexXml();
-    const parsed = parseIbkrFlexXml(xml);
-    setTransactions(parsed.transactions);
-    setAccounts(parsed.accounts);
-    setSecurities(parsed.securities);
-    setOpenPositions(parsed.openPositions);
-    setFlexConfig((prev) => ({
-      ...prev,
-      token: 'DEMO_SANDBOX_TOKEN',
-      tokenLast4: 'OKEN',
-      queryId: 'AF_CANADIAN_ACB',
-      status: 'CONNECTED',
-      lastSyncTimestamp: new Date().toISOString(),
-    }));
-  };
 
   // Replay Tax Engine
   const engineOutput = useMemo(() => {
@@ -213,13 +194,10 @@ export function App() {
   const handleTriggerSync = async (isBackfill = false) => {
     setIsSyncing(true);
     try {
-      const isSandbox = !flexConfig.tokenLast4 && (!flexConfig.token || flexConfig.token.startsWith('DEMO_'));
-      
       const fetchChunk = async (startDate?: string, endDate?: string) => {
         return await fetchIbkrFlexStatement({
-          token: isSandbox ? 'DEMO_SANDBOX_TOKEN' : flexConfig.token || '',
+          token: flexConfig.token || '',
           queryId: flexConfig.queryId || 'AF_CANADIAN_ACB',
-          useSandbox: isSandbox,
           startDate,
           endDate,
         });
@@ -227,7 +205,7 @@ export function App() {
 
       let results = [];
       
-      if (isBackfill && !isSandbox) {
+      if (isBackfill) {
         // Year-by-year backfill for the last 5 years up to today
         const currentYear = new Date().getFullYear();
         for (let year = currentYear - 5; year <= currentYear; year++) {
@@ -275,8 +253,7 @@ export function App() {
 
         // Merge transactions (deduplicating by ID) -> Cancellations void the original. Idempotent upsert.
         setTransactions((prev: Transaction[]) => {
-          const isPrevDemo = prev.some(t => t.accountId === 'U1084829' || t.accountId === 'U1084830');
-          const map = new Map<string, Transaction>(isPrevDemo ? [] : prev.map((t) => [t.id, t]));
+          const map = new Map<string, Transaction>(prev.map((t) => [t.id, t]));
           
           allParsed.forEach(parsed => {
             parsed.transactions.forEach((t: Transaction) => {
@@ -404,7 +381,6 @@ export function App() {
             selectedTaxYear={selectedTaxYear}
             onNavigateToTab={(tab) => setActiveTab(tab)}
             onOpenReview={(txId) => setActiveTab('review')}
-            onLoadDemoData={loadSandboxDemoData}
           />
         )}
 
@@ -433,7 +409,6 @@ export function App() {
             onTriggerSync={handleTriggerSync}
             isSyncing={isSyncing}
             reconciliationBreaks={reconciliationBreaks}
-            onLoadSandbox={loadSandboxDemoData}
           />
         )}
 
@@ -463,7 +438,6 @@ export function App() {
           />
         )}
 
-        {activeTab === 'tests' && <TestSuiteView />}
         {activeTab === 'help' && <HelpView />}
       </main>
 

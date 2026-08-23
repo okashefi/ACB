@@ -25,7 +25,6 @@ export type ActiveTab =
   | 'securities'
   | 'accounts'
   | 'settings'
-  | 'tests'
   | 'help';
 
 interface NavbarProps {
@@ -92,7 +91,6 @@ export const Navbar: React.FC<NavbarProps> = ({
               { id: 'accounts', label: 'Accounts', icon: Building2 },
               { id: 'settings', label: 'Settings', icon: Settings },
               { id: 'help', label: 'Help & Guide', icon: HelpCircle },
-              { id: 'tests', label: 'Test Suite', icon: TestTube2 },
             ].map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -189,7 +187,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             { id: 'accounts', label: 'Accounts', icon: Building2 },
             { id: 'settings', label: 'Settings', icon: Settings },
             { id: 'help', label: 'Help', icon: HelpCircle },
-            { id: 'tests', label: 'Tests', icon: TestTube2 },
           ].map((tab) => (
             <button
               key={tab.id}
