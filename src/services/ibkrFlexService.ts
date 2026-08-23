@@ -142,11 +142,11 @@ export async function fetchIbkrFlexStatement(options: FlexSyncOptions): Promise<
     const parsed = parseIbkrFlexXml(data.statementXml);
     
     const required = [
-      { name: 'Trades (Executions)', ok: parsed.hasTradesSection },
+      { name: 'Trades (Detail level: Execution)', ok: parsed.hasTradesSection },
       { name: 'Cash Transactions', ok: parsed.hasCashTransactionsSection },
       { name: 'Corporate Actions', ok: parsed.hasCorporateActionsSection },
       { name: 'Transfers', ok: parsed.hasTransfersSection },
-      { name: 'Option Exercises', ok: parsed.hasOptionExercisesSection },
+      { name: 'Option Exercises, Assignments and Expirations', ok: parsed.hasOptionExercisesSection },
       { name: 'Open Positions', ok: parsed.hasOpenPositionsSection },
       { name: 'Financial Instrument Information', ok: parsed.hasFinancialInstrumentInformationSection },
       { name: 'Account Information', ok: parsed.hasAccountInformationSection },
@@ -155,6 +155,12 @@ export async function fetchIbkrFlexStatement(options: FlexSyncOptions): Promise<
 
     const missing = required.filter(s => !s.ok).map(s => s.name);
     if (missing.length > 0 && !isDemo && !data.statementXml.includes('SANDBOX_REF')) { // Ignore strict validation for sandbox
+      if (!parsed.hasTradesSection) {
+        return {
+          success: false,
+          errorMessage: 'Open the Trades section and set detail level to Execution, then Select All. Executions is not a separate section.',
+        };
+      }
       return {
         success: false,
         errorMessage: 'IBKR Flex Web Service configuration is missing required sections: ' + missing.join(', ') + '. Please configure these sections in IBKR Portal.',
