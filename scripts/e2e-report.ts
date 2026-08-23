@@ -194,13 +194,20 @@ function main() {
       return q.gt(0) && !acb.isNaN() && acb.isFinite();
     });
 
-    activeBalances.sort((a, b) => d(b.totalAcbCad).minus(d(a.totalAcbCad)).toNumber());
+    const seenSymbols = new Set<string>();
+    const uniqueActiveBalances = activeBalances.filter((b) => {
+      if (seenSymbols.has(b.symbol)) return false;
+      seenSymbols.add(b.symbol);
+      return true;
+    });
+
+    uniqueActiveBalances.sort((a, b) => d(b.totalAcbCad).minus(d(a.totalAcbCad)).toNumber());
 
     lines.push('## Engine');
-    lines.push(`- Taxable pools: ${activeBalances.length}`);
+    lines.push(`- Taxable pools: ${uniqueActiveBalances.length}`);
     lines.push('- Top positions (qty / ACB CAD / ACB per unit):');
 
-    const topList = activeBalances.slice(0, 25);
+    const topList = uniqueActiveBalances.slice(0, 25);
     topList.forEach((bal) => {
       const qtyStr = bal.quantity;
       const acbStr = `$${bal.totalAcbCad}`;
@@ -208,8 +215,8 @@ function main() {
       const perUnitStr = `$${!perUnitVal.isNaN() && perUnitVal.isFinite() ? toMoney(perUnitVal) : '0.00'}`;
       lines.push(`  - ${bal.symbol.padEnd(8)} ${qtyStr.padStart(8)}  ${acbStr.padStart(12)}  ${perUnitStr.padStart(10)}/unit`);
     });
-    if (activeBalances.length > 25) {
-      lines.push(`  - ... +${activeBalances.length - 25} more`);
+    if (uniqueActiveBalances.length > 25) {
+      lines.push(`  - ... +${uniqueActiveBalances.length - 25} more`);
     }
 
     // Realized

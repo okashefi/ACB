@@ -1052,5 +1052,69 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     });
   }
 
+  // 24. Canonical Security Master Alias Consolidation (One Book per Security)
+  {
+    const start = performance.now();
+    const sec: SecurityMaster = {
+      id: 'CON_1',
+      conid: '1',
+      symbol: 'SHOP',
+      isin: 'CA82509L1076',
+      name: 'Shopify Inc.',
+      assetClass: 'STK',
+      currency: 'CAD',
+    };
+
+    const txs: Transaction[] = [
+      {
+        id: 'SHOP_1', accountId: 'ACCT_TAXABLE', securityId: 'CON_1', symbol: 'SHOP', date: '2024-01-10',
+        transactionType: 'BUY', quantity: '100', price: '50', currency: 'CAD', commission: '0', totalGrossAmount: '5000',
+        totalNetAmount: '5000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '5000', commissionCad: '0', totalOutlaysCad: '0',
+        status: 'approved', source: 'TEST_FIXTURE',
+      },
+      {
+        id: 'SHOP_2', accountId: 'ACCT_TAXABLE', securityId: 'SYM_SHOP', symbol: 'SHOP.TO', date: '2024-01-15',
+        transactionType: 'BUY', quantity: '50', price: '60', currency: 'CAD', commission: '0', totalGrossAmount: '3000',
+        totalNetAmount: '3000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '3000', commissionCad: '0', totalOutlaysCad: '0',
+        status: 'approved', source: 'TEST_FIXTURE',
+      },
+      {
+        id: 'SHOP_3', accountId: 'ACCT_TAXABLE', securityId: 'ISIN_CA82509L1076', symbol: 'SHOP', date: '2024-01-20',
+        transactionType: 'BUY', quantity: '25', price: '60', currency: 'CAD', commission: '0', totalGrossAmount: '1500',
+        totalNetAmount: '1500', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '1500', commissionCad: '0', totalOutlaysCad: '0',
+        status: 'approved', source: 'TEST_FIXTURE',
+      },
+      {
+        id: 'SHOP_4', accountId: 'ACCT_TAXABLE', securityId: undefined, symbol: 'SHOP', date: '2024-01-25',
+        transactionType: 'BUY', quantity: '25', price: '60', currency: 'CAD', commission: '0', totalGrossAmount: '1500',
+        totalNetAmount: '1500', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '1500', commissionCad: '0', totalOutlaysCad: '0',
+        status: 'approved', source: 'TEST_FIXTURE',
+      },
+    ];
+
+    const out = runAcbEngine(txs, [taxableAcct], [sec]);
+    const balances = Array.from(out.securityBalances.values());
+    const shopBal = out.securityBalances.get('CON_1');
+
+    const passed = out.securityBalances.size === 1 &&
+      balances.length === 1 &&
+      shopBal !== undefined &&
+      Number(shopBal.quantity) === 200 &&
+      Number(shopBal.totalAcbCad) === 11000;
+
+    results.push({
+      id: 'canonical-alias-consolidation',
+      name: 'Canonical Security Master Alias Consolidation',
+      category: 'Pool Integrity',
+      description: 'Single security referenced across CON_1, SYM_SHOP, SHOP, and ISIN_CA... consolidates into exactly one book with securityBalances.size === 1.',
+      statutoryCitations: ['ITA s. 47(1)'],
+      passed,
+      expectedResult: 'securityBalances.size === 1, Pool Qty: 200, Total ACB: $11,000.00 CAD',
+      actualResult: `securityBalances.size: ${out.securityBalances.size}, Pool Qty: ${shopBal?.quantity || 0}, Total ACB: $${shopBal?.totalAcbCad || 0} CAD`,
+      auditTrail: out.auditTrail,
+      executionTimeMs: performance.now() - start,
+    });
+  }
+
   return results;
 }

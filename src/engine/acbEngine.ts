@@ -60,12 +60,16 @@ export function runAcbEngine(
       targetId = `CON_${cConid}`;
     } else if (existingId && existingId.startsWith('CON_')) {
       targetId = existingId;
+    } else if (existingId && canonicalSecIdMap.has(existingId)) {
+      targetId = canonicalSecIdMap.get(existingId)!;
     } else if (cIsin && canonicalSecIdMap.has(`ISIN_${cIsin}`)) {
       targetId = canonicalSecIdMap.get(`ISIN_${cIsin}`)!;
     } else if (cSym && canonicalSecIdMap.has(`SYM_${cSym}`)) {
       targetId = canonicalSecIdMap.get(`SYM_${cSym}`)!;
     } else if (cBaseSym && canonicalSecIdMap.has(`SYM_${cBaseSym}`)) {
       targetId = canonicalSecIdMap.get(`SYM_${cBaseSym}`)!;
+    } else if (existingId) {
+      targetId = existingId;
     } else if (cIsin) {
       targetId = `ISIN_${cIsin}`;
     } else if (cSym) {
@@ -1044,20 +1048,6 @@ export function runAcbEngine(
       symbol: book.symbol,
       name: securityMap.get(secId)?.name || book.symbol,
     });
-  });
-
-  canonicalSecIdMap.forEach((targetId, sourceKey) => {
-    const book = books.get(targetId);
-    if (book) {
-      const isZero = book.quantity.isZero() || !book.quantity.isPositive();
-      securityBalances.set(sourceKey, {
-        quantity: isZero ? '0' : toShares(book.quantity),
-        totalAcbCad: isZero ? '0.00' : toMoney(book.totalAcbCad),
-        acbPerUnitCad: isZero ? '0.00' : toMoney(book.acbPerUnitCad),
-        symbol: book.symbol,
-        name: securityMap.get(sourceKey)?.name || securityMap.get(targetId)?.name || book.symbol,
-      });
-    }
   });
 
   let totalGain = new Decimal(0);
