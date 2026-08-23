@@ -1,5 +1,6 @@
 import { Transaction, Account, SecurityMaster, OpenPosition } from '../types/tax';
 import { runAcbEngine, reconcilePositions } from './acbEngine';
+import { parseIbkrFlexXml } from '../parsers/ibkrFlexXmlParser';
 
 export interface TestFixtureResult {
   id: string;
@@ -994,6 +995,59 @@ export function runAllTestFixtures(): TestFixtureResult[] {
       expectedResult: 'Status: needs_review, Pool Qty: 100, Dispositions: 0',
       actualResult: `Status: ${txs[1].status}, Pool Qty: ${balance?.quantity || 0}, Dispositions: ${out.realizedGainsLosses.length}`,
       auditTrail: out.auditTrail,
+      executionTimeMs: performance.now() - start,
+    });
+  }
+
+  // 23. Minimal IBKR Activity Flex XML wrapper resolution & single trade
+  {
+    const start = performance.now();
+    const minimalXml = `
+      <FlexQueryResponse queryResponseDate="20240115" queryName="ACB_QUERY" type="AF">
+        <FlexStatements count="1">
+          <FlexStatement accountId="U100100" fromDate="20240101" toDate="20240115" period="Last365CalendarDays" whenGenerated="20240115;100000">
+            <AccountInformation>
+              <AccountInfo accountId="U100100" acctAlias="Margin" currency="CAD" accountType="MARGIN" />
+            </AccountInformation>
+            <Trades>
+              <Trade accountId="U100100" conid="12345" symbol="SHOP" tradeDate="2024-01-10" quantity="100" tradePrice="100.50" currency="CAD" ibCommission="1.00" buySell="BUY" assetCategory="STK" />
+            </Trades>
+            <CashTransactions />
+            <CorporateActions />
+            <Transfers />
+            <OptionEAE />
+            <OpenPositions />
+            <SecuritiesInfo>
+              <SecurityInfo conid="12345" symbol="SHOP" description="Shopify Inc." assetCategory="STK" currency="CAD" />
+            </SecuritiesInfo>
+          </FlexStatement>
+        </FlexStatements>
+      </FlexQueryResponse>
+    `;
+
+    const parsed = parseIbkrFlexXml(minimalXml);
+    const passed = parsed.hasTradesSection === true &&
+      parsed.transactions.length === 1 &&
+      parsed.transactions[0].symbol === 'SHOP' &&
+      Number(parsed.transactions[0].quantity) === 100 &&
+      parsed.hasCashTransactionsSection === true &&
+      parsed.hasCorporateActionsSection === true &&
+      parsed.hasTransfersSection === true &&
+      parsed.hasOptionExercisesSection === true &&
+      parsed.hasOpenPositionsSection === true &&
+      parsed.hasFinancialInstrumentInformationSection === true &&
+      parsed.hasAccountInformationSection === true;
+
+    results.push({
+      id: 'flex-xml-wrapper-single-trade',
+      name: 'IBKR Flex XML Wrapper Resolution & Single Trade',
+      category: 'IBKR Flex Parser',
+      description: 'Parses standard FlexQueryResponse > FlexStatements > FlexStatement wrapper structure with attribute extraction.',
+      statutoryCitations: [],
+      passed,
+      expectedResult: 'hasTradesSection: true, transactions: 1, symbol: SHOP, all section flags: true',
+      actualResult: `hasTradesSection: ${parsed.hasTradesSection}, transactions: ${parsed.transactions.length}, symbol: ${parsed.transactions[0]?.symbol}, optionEAE: ${parsed.hasOptionExercisesSection}`,
+      auditTrail: [`Parsed ${parsed.transactions.length} trade(s) from FlexStatement`],
       executionTimeMs: performance.now() - start,
     });
   }

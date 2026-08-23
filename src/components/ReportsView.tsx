@@ -496,7 +496,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       <td className="py-3 px-3 text-[#71717A]">{sl.dispositionDate}</td>
                       <td className="py-3 px-3 text-right text-[#DC2626]">-{formatCad(sl.rawCapitalLossCad)}</td>
                       <td className="py-3 px-3 text-right text-[#7C3AED] font-bold">+{formatCad(sl.deniedLossCad)}</td>
-                      <td className="py-3 px-3 text-right text-[#DC2626] font-semibold">{sl.allowedLossCad > 0 ? `-${formatCad(sl.allowedLossCad)}` : '$0.00'}</td>
+                      <td className="py-3 px-3 text-right text-[#DC2626] font-semibold">{d(sl.allowedLossCad).gt(0) ? `-${formatCad(sl.allowedLossCad)}` : '$0.00'}</td>
                       <td className="py-3 px-3 text-[#71717A] text-[11px] font-sans">
                         {sl.replacementTransactionId ? (
                           <div className="flex items-center gap-1 text-[#2563EB]">

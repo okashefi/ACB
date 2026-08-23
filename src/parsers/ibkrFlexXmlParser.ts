@@ -31,6 +31,53 @@ const isAssignmentCode = (codeStr: string): boolean => {
   return tokens.includes('A') || codeStr.toLowerCase().includes('assign');
 };
 
+const toArray = (obj: any): any[] => {
+  if (obj === undefined || obj === null || obj === '') return [];
+  return Array.isArray(obj) ? obj : [obj];
+};
+
+function getAttr(node: any, ...keys: string[]): string {
+  if (!node || typeof node !== 'object') return '';
+  for (const key of keys) {
+    if (node[key] !== undefined && node[key] !== null) {
+      if (typeof node[key] === 'string' || typeof node[key] === 'number' || typeof node[key] === 'boolean') {
+        const v = String(node[key]).trim();
+        if (v !== '') return v;
+      }
+    }
+    const atKey = `@_${key}`;
+    if (node[atKey] !== undefined && node[atKey] !== null) {
+      if (typeof node[atKey] === 'string' || typeof node[atKey] === 'number' || typeof node[atKey] === 'boolean') {
+        const v = String(node[atKey]).trim();
+        if (v !== '') return v;
+      }
+    }
+  }
+  return '';
+}
+
+function getNum(node: any, ...keys: string[]): number {
+  const str = getAttr(node, ...keys);
+  if (!str) return 0;
+  const val = parseFloat(str);
+  return isNaN(val) ? 0 : val;
+}
+
+function parseIbkrDate(rawDateStr: string): { date: string; parseError: boolean } {
+  if (!rawDateStr) return { date: '', parseError: false };
+  const str = rawDateStr.trim().replace(/\//g, '-');
+  if (str.length >= 10 && /^\d{4}-\d{2}-\d{2}/.test(str)) {
+    return { date: str.substring(0, 10), parseError: false };
+  }
+  if (/^\d{8}/.test(str)) {
+    const y = str.substring(0, 4);
+    const m = str.substring(4, 6);
+    const d = str.substring(6, 8);
+    return { date: `${y}-${m}-${d}`, parseError: false };
+  }
+  return { date: str, parseError: true };
+}
+
 export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
   const parser = new XMLParser({
     ignoreAttributes: false,
@@ -42,18 +89,28 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
   const parsed = parser.parse(xmlContent);
   const errors: string[] = [];
 
-  const root = parsed.FlexQueryResponse || parsed.FlexStatements || parsed;
-  const flexStatements = Array.isArray(root.FlexStatements?.FlexStatement)
-    ? root.FlexStatements.FlexStatement
-    : root.FlexStatement
-    ? [root.FlexStatement]
-    : [];
+  // 1. Resolve statements:
+  // FlexQueryResponse.FlexStatements.FlexStatement
+  // then FlexStatements.FlexStatement
+  // then FlexStatement
+  // Always toArray() that node. Never treat FlexStatements itself as a statement.
+  let rawStmtNodes: any = undefined;
+  if (parsed?.FlexQueryResponse?.FlexStatements?.FlexStatement !== undefined) {
+    rawStmtNodes = parsed.FlexQueryResponse.FlexStatements.FlexStatement;
+  } else if (parsed?.FlexStatements?.FlexStatement !== undefined) {
+    rawStmtNodes = parsed.FlexStatements.FlexStatement;
+  } else if (parsed?.FlexStatement !== undefined) {
+    rawStmtNodes = parsed.FlexStatement;
+  } else if (parsed?.FlexQueryResponse?.FlexStatement !== undefined) {
+    rawStmtNodes = parsed.FlexQueryResponse.FlexStatement;
+  }
+
+  const flexStatements = toArray(rawStmtNodes);
 
   const accountsMap = new Map<string, Account>();
   const securitiesMap = new Map<string, SecurityMaster>();
   const transactions: Transaction[] = [];
   const openPositions: OpenPosition[] = [];
-
 
   let hasCorporateActionsSection = false;
   let hasTradesSection = false;
@@ -67,31 +124,130 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
   let hasLotBreakout = false;
   let hasDateParseError = false;
 
-
-  const toArray = (obj: any): any[] => {
-    if (!obj) return [];
-    return Array.isArray(obj) ? obj : [obj];
-  };
-
   for (const stmt of flexStatements) {
-    if (stmt.AccountInformation !== undefined || stmt.AccountInfo !== undefined) hasAccountInformationSection = true;
-    if (stmt.SecuritiesInfo !== undefined || stmt.FinancialInstrumentInformation !== undefined) hasFinancialInstrumentInformationSection = true;
-    if (stmt.Trades !== undefined) hasTradesSection = true;
-    if (stmt.CorporateActions !== undefined) hasCorporateActionsSection = true;
-    if (stmt.CashTransactions !== undefined) hasCashTransactionsSection = true;
-    if (stmt.OpenPositions !== undefined) hasOpenPositionsSection = true;
-    if (stmt.OptionExercises !== undefined || stmt.OptionEAE !== undefined || stmt.OptionExercisesAndAssignments !== undefined) hasOptionExercisesSection = true;
-    if (stmt.Transfers !== undefined) hasTransfersSection = true;
-    if (stmt.ConversionDetails !== undefined || stmt.FxTransactions !== undefined || stmt.CurrencyConversions !== undefined) hasConversionDetailsSection = true;
+    if (!stmt || typeof stmt !== 'object') continue;
+
+    // Section flags: present if the section node exists, even when it has 0 children
+    if (
+      stmt.AccountInformation !== undefined ||
+      stmt.AccountInfo !== undefined ||
+      stmt['@_AccountInformation'] !== undefined ||
+      stmt['@_AccountInfo'] !== undefined
+    ) {
+      hasAccountInformationSection = true;
+    }
+
+    if (
+      stmt.SecuritiesInfo !== undefined ||
+      stmt.FinancialInstrumentInformation !== undefined ||
+      stmt.SecurityInfo !== undefined ||
+      stmt.FinancialInstrumentInfo !== undefined ||
+      stmt['@_SecuritiesInfo'] !== undefined ||
+      stmt['@_FinancialInstrumentInformation'] !== undefined
+    ) {
+      hasFinancialInstrumentInformationSection = true;
+    }
+
+    if (
+      stmt.Trades !== undefined ||
+      stmt.Trade !== undefined ||
+      stmt.Execution !== undefined ||
+      stmt['@_Trades'] !== undefined ||
+      stmt['@_Trade'] !== undefined
+    ) {
+      hasTradesSection = true;
+    }
+
+    if (
+      stmt.CorporateActions !== undefined ||
+      stmt.CorporateAction !== undefined ||
+      stmt['@_CorporateActions'] !== undefined ||
+      stmt['@_CorporateAction'] !== undefined
+    ) {
+      hasCorporateActionsSection = true;
+    }
+
+    if (
+      stmt.CashTransactions !== undefined ||
+      stmt.CashTransaction !== undefined ||
+      stmt['@_CashTransactions'] !== undefined ||
+      stmt['@_CashTransaction'] !== undefined
+    ) {
+      hasCashTransactionsSection = true;
+    }
+
+    if (
+      stmt.OpenPositions !== undefined ||
+      stmt.OpenPosition !== undefined ||
+      stmt['@_OpenPositions'] !== undefined ||
+      stmt['@_OpenPosition'] !== undefined
+    ) {
+      hasOpenPositionsSection = true;
+    }
+
+    // Map OptionEAE -> hasOptionExercisesSection
+    if (
+      stmt.OptionEAE !== undefined ||
+      stmt.OptionExercises !== undefined ||
+      stmt.OptionExercise !== undefined ||
+      stmt.OptionExercisesAndAssignments !== undefined ||
+      stmt.OptionExercisesAssignmentsAndExpirations !== undefined ||
+      stmt['@_OptionEAE'] !== undefined ||
+      stmt['@_OptionExercises'] !== undefined
+    ) {
+      hasOptionExercisesSection = true;
+    }
+
+    if (
+      stmt.Transfers !== undefined ||
+      stmt.Transfer !== undefined ||
+      stmt['@_Transfers'] !== undefined ||
+      stmt['@_Transfer'] !== undefined
+    ) {
+      hasTransfersSection = true;
+    }
+
+    if (
+      stmt.ConversionDetails !== undefined ||
+      stmt.ConversionRates !== undefined ||
+      stmt.ConversionRate !== undefined ||
+      stmt.FxTransactions !== undefined ||
+      stmt.CurrencyConversions !== undefined ||
+      stmt['@_ConversionDetails'] !== undefined ||
+      stmt['@_ConversionRates'] !== undefined
+    ) {
+      hasConversionDetailsSection = true;
+    }
+
+    // Check for lot breakout tags
+    if (
+      stmt.Trades?.Order !== undefined ||
+      stmt.Trades?.Lot !== undefined ||
+      stmt.Trades?.ClosedLot !== undefined ||
+      stmt.ClosedLots !== undefined ||
+      stmt.Orders !== undefined ||
+      stmt['@_ClosedLots'] !== undefined
+    ) {
+      hasLotBreakout = true;
+    }
 
     // 1. Account Information
-    const acctInfoList = toArray(stmt.AccountInformation?.AccountInfo || stmt.AccountInformation || stmt.AccountInfo);
-    if (acctInfoList.length > 0) hasAccountInformationSection = true;
+    const acctInfoList: any[] = [];
+    if (stmt.AccountInformation?.AccountInfo !== undefined) {
+      acctInfoList.push(...toArray(stmt.AccountInformation.AccountInfo));
+    } else if (stmt.AccountInfo !== undefined) {
+      acctInfoList.push(...toArray(stmt.AccountInfo));
+    } else if (stmt.AccountInformation && typeof stmt.AccountInformation === 'object') {
+      if (getAttr(stmt.AccountInformation, 'accountId', 'account')) {
+        acctInfoList.push(stmt.AccountInformation);
+      }
+    }
+
     for (const info of acctInfoList) {
-      const acctId = info.accountId || info.account || 'U_DEFAULT';
-      const alias = info.acctAlias || info.accountAlias || info.accountTitle || acctId;
-      const currency = info.currency || info.baseCurrency || 'CAD';
-      const typeStr = (info.type || info.accountType || '').toUpperCase();
+      const acctId = getAttr(info, 'accountId', 'account') || 'U_DEFAULT';
+      const alias = getAttr(info, 'acctAlias', 'accountAlias', 'accountTitle') || acctId;
+      const currency = getAttr(info, 'currency', 'baseCurrency') || 'CAD';
+      const typeStr = getAttr(info, 'type', 'accountType').toUpperCase();
 
       let accountType: Account['accountType'] = 'taxable';
       if (typeStr.includes('TFSA') || alias.toUpperCase().includes('TFSA')) accountType = 'tfsa';
@@ -112,75 +268,92 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
     }
 
     // 2. Financial Instrument Information (Security Master)
-    const secList = toArray(stmt.SecuritiesInfo?.SecurityInfo || stmt.FinancialInstrumentInformation?.FinancialInstrumentInfo);
-    if (secList.length > 0) hasFinancialInstrumentInformationSection = true;
+    const secList: any[] = [];
+    if (stmt.SecuritiesInfo?.SecurityInfo !== undefined) {
+      secList.push(...toArray(stmt.SecuritiesInfo.SecurityInfo));
+    } else if (stmt.FinancialInstrumentInformation?.FinancialInstrumentInfo !== undefined) {
+      secList.push(...toArray(stmt.FinancialInstrumentInformation.FinancialInstrumentInfo));
+    } else if (stmt.SecurityInfo !== undefined) {
+      secList.push(...toArray(stmt.SecurityInfo));
+    } else if (stmt.FinancialInstrumentInfo !== undefined) {
+      secList.push(...toArray(stmt.FinancialInstrumentInfo));
+    } else if (stmt.SecuritiesInfo && typeof stmt.SecuritiesInfo === 'object') {
+      if (getAttr(stmt.SecuritiesInfo, 'conid', 'symbol')) {
+        secList.push(stmt.SecuritiesInfo);
+      }
+    }
+
     for (const s of secList) {
-      const conid = s.conid || s.conId || '';
-      const symbol = s.symbol || s.ticker || '';
-      const assetClass = (s.assetCategory || s.assetClass || 'STK').toUpperCase();
-      const isin = s.isin || '';
-      const cusip = s.cusip || '';
+      const conid = getAttr(s, 'conid', 'conId');
+      const symbol = getAttr(s, 'symbol', 'ticker');
+      const assetClass = (getAttr(s, 'assetCategory', 'assetClass') || 'STK').toUpperCase();
+      const isin = getAttr(s, 'isin', 'ISIN');
+      const cusip = getAttr(s, 'cusip', 'CUSIP');
       const secId = conid ? `CON_${conid}` : (isin ? `ISIN_${isin}` : `SYM_${symbol}`);
 
       let optionDetails;
       if (assetClass === 'OPT') {
-        const rightStr = (s.putCall || s.right || s.putOrCall || s.type || s.description || '').toUpperCase();
+        const rightStr = (getAttr(s, 'putCall', 'right', 'putOrCall', 'type', 'description') || '').toUpperCase();
         const isPut = rightStr.includes('PUT') || rightStr === 'P' || rightStr.endsWith(' P');
         optionDetails = {
-          underlyingSymbol: s.underlyingSymbol || symbol.split(' ')[0] || symbol,
+          underlyingSymbol: getAttr(s, 'underlyingSymbol') || symbol.split(' ')[0] || symbol,
           putOrCall: (isPut ? 'PUT' : 'CALL') as 'PUT' | 'CALL',
-          strike: parseFloat(s.strike || '0').toString(),
-          expiryDate: s.expiry || s.maturity || '',
-          multiplier: parseInt(s.multiplier || '100', 10),
-          deliverable: s.deliverable,
+          strike: getNum(s, 'strike', 'strikePrice').toString(),
+          expiryDate: getAttr(s, 'expiry', 'maturity', 'expirationDate'),
+          multiplier: parseInt(getAttr(s, 'multiplier') || '100', 10),
+          deliverable: getAttr(s, 'deliverable') || undefined,
         };
       }
 
       securitiesMap.set(secId, {
         id: secId,
         symbol,
-        name: s.description || symbol,
+        name: getAttr(s, 'description', 'desc', 'name') || symbol,
         assetClass: assetClass === 'OPT' ? 'OPT' : (assetClass === 'CASH' ? 'CASH' : 'STK'),
         isin,
         cusip,
         conid,
-        listingExchange: s.listingExchange || s.exchange,
-        currency: s.currency || 'USD',
-        countryOfOrigin: (s.countryOfOrigin || (symbol.endsWith('.TO') || symbol.endsWith('.V') ? 'CA' : 'US')) as any,
+        listingExchange: getAttr(s, 'listingExchange', 'exchange'),
+        currency: getAttr(s, 'currency') || 'USD',
+        countryOfOrigin: (getAttr(s, 'countryOfOrigin', 'country') || (symbol.endsWith('.TO') || symbol.endsWith('.V') ? 'CA' : 'US')) as any,
         optionDetails,
       });
     }
 
-    // Check for lot breakout tags
-    if (stmt.Trades?.Order !== undefined || stmt.Trades?.Lot !== undefined || stmt.Trades?.ClosedLot !== undefined || stmt.ClosedLots !== undefined || stmt.Orders !== undefined) {
-      hasLotBreakout = true;
+    // 3. Trades (Executions)
+    const tradesList: any[] = [];
+    if (stmt.Trades?.Trade !== undefined) {
+      tradesList.push(...toArray(stmt.Trades.Trade));
+    } else if (stmt.Trades?.Execution !== undefined) {
+      tradesList.push(...toArray(stmt.Trades.Execution));
+    } else if (stmt.Trade !== undefined) {
+      tradesList.push(...toArray(stmt.Trade));
+    } else if (stmt.Execution !== undefined) {
+      tradesList.push(...toArray(stmt.Execution));
+    } else if (stmt.Trades && typeof stmt.Trades === 'object' && getAttr(stmt.Trades, 'symbol', 'conid')) {
+      tradesList.push(stmt.Trades);
     }
 
-    // 3. Trades (Executions)
-    const tradesList = toArray(stmt.Trades?.Trade || stmt.Trades?.Execution);
-    if (tradesList.length > 0) hasTradesSection = true;
-
     for (const t of tradesList) {
-      const tradeId = t.tradeID || t.ibExecID || t.transactionID || `${t.tradeDate}_${t.symbol}_${t.quantity}_${t.tradePrice}`;
-      const symbol = t.symbol || '';
-      const conid = t.conid || t.conId || '';
+      const symbol = getAttr(t, 'symbol', 'ticker');
+      const conid = getAttr(t, 'conid', 'conId');
       const secId = conid ? `CON_${conid}` : `SYM_${symbol}`;
-      const rawDate = t.tradeDate || t.dateTime?.substring(0, 10) || '';
-      
-      let date = rawDate.replace(/\//g, '-');
-      if (/^\d{8}$/.test(rawDate)) {
-        date = `${rawDate.substring(0, 4)}-${rawDate.substring(4, 6)}-${rawDate.substring(6, 8)}`;
-      } else if (rawDate && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-        hasDateParseError = true;
-      }
-      const qty = Math.abs(parseFloat(t.quantity || '0'));
-      const price = parseFloat(t.tradePrice || t.price || '0');
-      const currency = t.currency || 'USD';
-      const comm = Math.abs(parseFloat(t.ibCommission || t.commission || '0'));
-      const buySell = (t.buySell || (parseFloat(t.quantity || '0') > 0 ? 'BUY' : 'SELL')).toUpperCase();
-      const assetCat = (t.assetCategory || 'STK').toUpperCase();
-      const code = t.code || t.notes || '';
-      const isCancelled = code.includes('Ca') || t.transactionType === 'CANCEL';
+      const rawDate = getAttr(t, 'tradeDate', 'date', 'dateTime');
+      const { date, parseError } = parseIbkrDate(rawDate);
+      if (parseError) hasDateParseError = true;
+
+      const qty = Math.abs(getNum(t, 'quantity', 'shares', 'units', 'position'));
+      const price = getNum(t, 'tradePrice', 'price', 'costBasisPrice');
+      const currency = getAttr(t, 'currency', 'cur') || 'USD';
+      const comm = Math.abs(getNum(t, 'ibCommission', 'commission', 'taxes'));
+      const buySell = (getAttr(t, 'buySell', 'side') || (getNum(t, 'quantity') > 0 ? 'BUY' : 'SELL')).toUpperCase();
+      const assetCat = (getAttr(t, 'assetCategory', 'assetClass') || 'STK').toUpperCase();
+      const code = getAttr(t, 'code', 'notes', 'openCloseIndicator');
+      const isCancelled = code.includes('Ca') || getAttr(t, 'transactionType', 'type') === 'CANCEL';
+
+      const tradeId =
+        getAttr(t, 'tradeID', 'ibExecID', 'transactionID', 'execID') ||
+        `${date}_${symbol}_${qty}_${price}`;
 
       let txType: Transaction['transactionType'] = 'BUY';
       if (assetCat === 'OPT') {
@@ -193,7 +366,6 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
         txType = buySell.includes('BUY') ? 'BUY' : 'SELL';
       }
 
-      // Check assignment / exercise code
       if (isAssignmentCode(code)) {
         txType = buySell.includes('BUY') ? 'ASSIGNED_SHORT_PUT' : 'ASSIGNED_SHORT_CALL';
       } else if (code.includes('Ex') || code.includes('Exerc')) {
@@ -201,29 +373,32 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
       }
 
       const grossAmount = qty * price;
-      const explicitFx = t.fxRateToBase ? parseFloat(t.fxRateToBase) : undefined;
+      const rawFx = getAttr(t, 'fxRateToBase', 'fxRate');
+      const explicitFx = rawFx ? parseFloat(rawFx) : undefined;
       const { amountCad, fxRate, fxSource } = convertToCad(grossAmount, currency, date, explicitFx);
       const { amountCad: commCad } = convertToCad(comm, currency, date, explicitFx);
 
-      // Register security if not already present
       if (!securitiesMap.has(secId)) {
         securitiesMap.set(secId, {
           id: secId,
           symbol,
-          name: t.description || symbol,
+          name: getAttr(t, 'description', 'desc') || symbol,
           assetClass: assetCat === 'OPT' ? 'OPT' : 'STK',
           conid,
           currency,
         });
       }
 
+      const settleRaw = getAttr(t, 'settleDateTarget', 'settleDate', 'settlementDate');
+      const { date: settlementDate } = parseIbkrDate(settleRaw);
+
       transactions.push({
         id: `IBKR_TR_${tradeId}`,
-        accountId: t.accountId || 'U_DEFAULT',
+        accountId: getAttr(t, 'accountId', 'account') || 'U_DEFAULT',
         securityId: secId,
         symbol,
         date,
-        settlementDate: t.settleDateTarget?.replace(/\//g, '-'),
+        settlementDate: settlementDate || undefined,
         transactionType: txType,
         quantity: String(qty),
         price: String(price),
@@ -245,20 +420,30 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
     }
 
     // 4. Corporate Actions
-    const caList = toArray(stmt.CorporateActions?.CorporateAction);
-    if (caList.length > 0) hasCorporateActionsSection = true;
+    const caList: any[] = [];
+    if (stmt.CorporateActions?.CorporateAction !== undefined) {
+      caList.push(...toArray(stmt.CorporateActions.CorporateAction));
+    } else if (stmt.CorporateAction !== undefined) {
+      caList.push(...toArray(stmt.CorporateAction));
+    } else if (stmt.CorporateActions && typeof stmt.CorporateActions === 'object' && getAttr(stmt.CorporateActions, 'symbol', 'conid', 'actionID')) {
+      caList.push(stmt.CorporateActions);
+    }
 
     for (const ca of caList) {
-      const caId = ca.actionID || ca.transactionID || `${ca.reportDate}_${ca.symbol}_${ca.type}`;
-      const symbol = ca.symbol || '';
-      const conid = ca.conid || '';
+      const symbol = getAttr(ca, 'symbol', 'ticker');
+      const conid = getAttr(ca, 'conid', 'conId');
       const secId = conid ? `CON_${conid}` : `SYM_${symbol}`;
-      const rawDate = ca.reportDate || ca.dateTime?.substring(0, 10) || '';
-      const date = rawDate.replace(/\//g, '-');
-      const desc = ca.description || ca.type || 'Corporate Action';
-      const cash = parseFloat(ca.cashProceeds || ca.amount || '0');
-      const qty = parseFloat(ca.quantity || '0');
-      const currency = ca.currency || 'USD';
+      const rawDate = getAttr(ca, 'reportDate', 'date', 'dateTime');
+      const { date } = parseIbkrDate(rawDate);
+      const desc = getAttr(ca, 'description', 'type') || 'Corporate Action';
+      const cash = getNum(ca, 'cashProceeds', 'amount', 'cash');
+      const qty = getNum(ca, 'quantity', 'shares');
+      const currency = getAttr(ca, 'currency') || 'USD';
+      const caType = getAttr(ca, 'type', 'actionType');
+
+      const caId =
+        getAttr(ca, 'actionID', 'transactionID', 'corporateActionID') ||
+        `${date}_${symbol}_${caType}`;
 
       const isCaTarget = symbol.endsWith('.TO') || symbol.endsWith('.V');
       const { suggestedTreatment, statutoryBasis, notes } = classifyBrokerCorporateAction(
@@ -282,7 +467,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
 
       transactions.push({
         id: `IBKR_CA_${caId}`,
-        accountId: ca.accountId || 'U_DEFAULT',
+        accountId: getAttr(ca, 'accountId', 'account') || 'U_DEFAULT',
         securityId: secId,
         symbol,
         date,
@@ -306,19 +491,28 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
     }
 
     // 5. Cash Transactions (Dividends, ROC, Withholding)
-    const cashList = toArray(stmt.CashTransactions?.CashTransaction);
-    if (cashList.length > 0) hasCashTransactionsSection = true;
+    const cashList: any[] = [];
+    if (stmt.CashTransactions?.CashTransaction !== undefined) {
+      cashList.push(...toArray(stmt.CashTransactions.CashTransaction));
+    } else if (stmt.CashTransaction !== undefined) {
+      cashList.push(...toArray(stmt.CashTransaction));
+    } else if (stmt.CashTransactions && typeof stmt.CashTransactions === 'object' && getAttr(stmt.CashTransactions, 'amount', 'type', 'transactionID')) {
+      cashList.push(stmt.CashTransactions);
+    }
 
     for (const c of cashList) {
-      const cId = c.transactionID || `${c.dateTime}_${c.type}_${c.amount}`;
-      const rawDate = c.reportDate || c.dateTime?.substring(0, 10) || '';
-      const date = rawDate.replace(/\//g, '-');
-      const type = (c.type || '').toUpperCase();
-      const desc = c.description || '';
-      const amount = Math.abs(parseFloat(c.amount || '0'));
-      const currency = c.currency || 'USD';
-      const symbol = c.symbol || 'CASH';
+      const rawDate = getAttr(c, 'reportDate', 'date', 'dateTime');
+      const { date } = parseIbkrDate(rawDate);
+      const type = getAttr(c, 'type', 'transactionType').toUpperCase();
+      const desc = getAttr(c, 'description', 'desc');
+      const amount = Math.abs(getNum(c, 'amount', 'grossAmount'));
+      const currency = getAttr(c, 'currency') || 'USD';
+      const symbol = getAttr(c, 'symbol', 'ticker') || 'CASH';
       const secId = `SYM_${symbol}`;
+
+      const cId =
+        getAttr(c, 'transactionID', 'cId') ||
+        `${date}_${type}_${amount}`;
 
       const { amountCad, fxRate, fxSource } = convertToCad(amount, currency, date);
 
@@ -332,12 +526,12 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
       } else if (type.includes('PAYMENT IN LIEU') || desc.toUpperCase().includes('PAYMENT IN LIEU')) {
         txType = 'PAYMENT_IN_LIEU';
       } else if (type.includes('INTEREST') || desc.toUpperCase().includes('INTEREST')) {
-        txType = parseFloat(c.amount || '0') >= 0 ? 'INTEREST_RECEIVED' : 'INTEREST_PAID';
+        txType = getNum(c, 'amount') >= 0 ? 'INTEREST_RECEIVED' : 'INTEREST_PAID';
       }
 
       transactions.push({
         id: `IBKR_CASH_${cId}`,
-        accountId: c.accountId || 'U_DEFAULT',
+        accountId: getAttr(c, 'accountId', 'account') || 'U_DEFAULT',
         securityId: secId,
         symbol,
         date,
@@ -359,60 +553,83 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
     }
 
     // 6. Open Positions (for Reconciliation)
-    const posList = toArray(stmt.OpenPositions?.OpenPosition);
-    if (posList.length > 0) hasOpenPositionsSection = true;
+    const posList: any[] = [];
+    if (stmt.OpenPositions?.OpenPosition !== undefined) {
+      posList.push(...toArray(stmt.OpenPositions.OpenPosition));
+    } else if (stmt.OpenPosition !== undefined) {
+      posList.push(...toArray(stmt.OpenPosition));
+    } else if (stmt.OpenPositions && typeof stmt.OpenPositions === 'object' && getAttr(stmt.OpenPositions, 'symbol', 'conid', 'position', 'quantity')) {
+      posList.push(stmt.OpenPositions);
+    }
 
     for (const p of posList) {
-      const symbol = p.symbol || '';
-      const conid = p.conid || '';
+      const symbol = getAttr(p, 'symbol', 'ticker');
+      const conid = getAttr(p, 'conid', 'conId');
       const secId = conid ? `CON_${conid}` : `SYM_${symbol}`;
-      const qty = parseFloat(p.position || p.quantity || '0');
-      const costPrice = parseFloat(p.costBasisPrice || p.openPrice || '0');
-      const markPrice = parseFloat(p.markPrice || '0');
-      const currency = p.currency || 'USD';
-      const posVal = parseFloat(p.positionValue || '0');
-      const { amountCad: posValCad } = convertToCad(posVal, currency, stmt.toDate || '2026-08-22');
+      const qty = getNum(p, 'position', 'quantity', 'units');
+      const costPrice = getNum(p, 'costBasisPrice', 'openPrice', 'costPrice');
+      const markPrice = getNum(p, 'markPrice', 'price', 'closePrice');
+      const currency = getAttr(p, 'currency') || 'USD';
+      const posVal = getNum(p, 'positionValue', 'marketValue', 'value');
+
+      const rawStmtDate = getAttr(stmt, 'toDate', 'reportDate') || '2026-08-22';
+      const { date: asOfDate } = parseIbkrDate(rawStmtDate);
+      const { amountCad: posValCad } = convertToCad(posVal, currency, asOfDate || '2026-08-22');
 
       openPositions.push({
-        accountId: p.accountId || 'U_DEFAULT',
+        accountId: getAttr(p, 'accountId', 'account') || 'U_DEFAULT',
         securityId: secId,
         symbol,
         conid,
-        isin: p.isin,
+        isin: getAttr(p, 'isin', 'ISIN'),
         quantity: String(qty),
         costPrice: String(costPrice),
         currency,
         markPrice: String(markPrice),
         positionValueCad: String(posValCad),
-        asOfDate: stmt.toDate || stmt.reportDate || '2026-08-22',
+        asOfDate: asOfDate || '2026-08-22',
       });
     }
 
     // 7. Option Exercises and Assignments
-    const optList = toArray(
-      stmt.OptionExercises?.OptionExercise ||
-      stmt.OptionEAE?.OptionEAE ||
-      stmt.OptionExercisesAndAssignments?.OptionExerciseAndAssignment
-    );
+    const optList: any[] = [];
+    if (stmt.OptionEAE?.OptionEAE !== undefined) {
+      optList.push(...toArray(stmt.OptionEAE.OptionEAE));
+    } else if (stmt.OptionExercises?.OptionExercise !== undefined) {
+      optList.push(...toArray(stmt.OptionExercises.OptionExercise));
+    } else if (stmt.OptionExercisesAndAssignments?.OptionExerciseAndAssignment !== undefined) {
+      optList.push(...toArray(stmt.OptionExercisesAndAssignments.OptionExerciseAndAssignment));
+    } else if (stmt.OptionExercisesAssignmentsAndExpirations?.OptionExercisesAssignmentsAndExpiration !== undefined) {
+      optList.push(...toArray(stmt.OptionExercisesAssignmentsAndExpirations.OptionExercisesAssignmentsAndExpiration));
+    } else if (stmt.OptionEAE !== undefined && typeof stmt.OptionEAE === 'object' && getAttr(stmt.OptionEAE, 'symbol', 'conid', 'quantity')) {
+      optList.push(stmt.OptionEAE);
+    } else if (stmt.OptionExercise !== undefined) {
+      optList.push(...toArray(stmt.OptionExercise));
+    }
+
     for (const opt of optList) {
-      const optId = opt.transactionID || opt.tradeID || opt.actionID || `${opt.reportDate || opt.tradeDate}_${opt.symbol}_${opt.quantity}`;
-      const symbol = opt.symbol || '';
-      const conid = opt.conid || opt.conId || '';
+      const symbol = getAttr(opt, 'symbol', 'ticker');
+      const conid = getAttr(opt, 'conid', 'conId');
       const secId = conid ? `CON_${conid}` : `SYM_${symbol}`;
-      const rawDate = opt.tradeDate || opt.reportDate || opt.dateTime?.substring(0, 10) || '';
-      const date = rawDate.replace(/\//g, '-');
-      const qty = Math.abs(parseFloat(opt.quantity || '0'));
-      const strike = parseFloat(opt.tradePrice || opt.strikePrice || opt.strike || '0');
-      const currency = opt.currency || 'USD';
-      const comm = Math.abs(parseFloat(opt.ibCommission || opt.commission || '0'));
+      const rawDate = getAttr(opt, 'tradeDate', 'reportDate', 'date', 'dateTime');
+      const { date } = parseIbkrDate(rawDate);
+      const qty = Math.abs(getNum(opt, 'quantity', 'units', 'position'));
+      const strike = getNum(opt, 'tradePrice', 'strikePrice', 'strike', 'price');
+      const currency = getAttr(opt, 'currency') || 'USD';
+      const comm = Math.abs(getNum(opt, 'ibCommission', 'commission'));
       const grossAmount = qty * strike;
-      const explicitFx = opt.fxRateToBase ? parseFloat(opt.fxRateToBase) : undefined;
+      const rawFx = getAttr(opt, 'fxRateToBase', 'fxRate');
+      const explicitFx = rawFx ? parseFloat(rawFx) : undefined;
       const { amountCad, fxRate, fxSource } = convertToCad(grossAmount, currency, date, explicitFx);
       const { amountCad: commCad } = convertToCad(comm, currency, date, explicitFx);
 
-      const rawType = (opt.type || opt.transactionType || opt.action || opt.putCall || opt.right || opt.assetCategory || opt.description || '').toUpperCase();
+      const optId =
+        getAttr(opt, 'transactionID', 'tradeID', 'actionID') ||
+        `${date}_${symbol}_${qty}`;
+
+      const rawType = (getAttr(opt, 'type', 'transactionType', 'action', 'putCall', 'right', 'assetCategory', 'description') || '').toUpperCase();
       const isPut = rawType.includes('PUT') || rawType === 'P' || rawType.endsWith(' P');
-      const code = opt.code || opt.notes || '';
+      const code = getAttr(opt, 'code', 'notes');
       let txType: Transaction['transactionType'] = 'EXERCISE_LONG_CALL';
       if (rawType.includes('ASSIGN') || isAssignmentCode(code)) {
         txType = isPut ? 'ASSIGNED_SHORT_PUT' : 'ASSIGNED_SHORT_CALL';
@@ -420,7 +637,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
         txType = isPut ? 'EXERCISE_LONG_PUT' : 'EXERCISE_LONG_CALL';
       }
 
-      // Check if already present from Trades section (share tradeID, executionID, or conid+date+qty)
+      // Check if already present from Trades section
       const existingTradeIndex = transactions.findIndex((t) => {
         if (optId) {
           if (t.ibkrTransactionId && t.ibkrTransactionId === optId) return true;
@@ -435,7 +652,6 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
       });
 
       if (existingTradeIndex >= 0) {
-        // Update existing trade row with linked option exercise type and code
         const existing = transactions[existingTradeIndex];
         existing.ibkrCode = existing.ibkrCode || code || rawType;
         if (!existing.transactionType.includes('ASSIGNED') && !existing.transactionType.includes('EXERCISE')) {
@@ -446,7 +662,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
 
       transactions.push({
         id: `IBKR_OPT_${optId}`,
-        accountId: opt.accountId || 'U_DEFAULT',
+        accountId: getAttr(opt, 'accountId', 'account') || 'U_DEFAULT',
         securityId: secId,
         symbol,
         date,
@@ -470,27 +686,39 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
     }
 
     // 8. Transfers (In / Out)
-    const xferList = toArray(stmt.Transfers?.Transfer);
+    const xferList: any[] = [];
+    if (stmt.Transfers?.Transfer !== undefined) {
+      xferList.push(...toArray(stmt.Transfers.Transfer));
+    } else if (stmt.Transfer !== undefined) {
+      xferList.push(...toArray(stmt.Transfer));
+    } else if (stmt.Transfers && typeof stmt.Transfers === 'object' && getAttr(stmt.Transfers, 'symbol', 'conid', 'transferID')) {
+      xferList.push(stmt.Transfers);
+    }
+
     for (const xfer of xferList) {
-      const xferId = xfer.transactionID || xfer.transferID || `${xfer.reportDate || xfer.date}_${xfer.symbol}_${xfer.quantity}`;
-      const symbol = xfer.symbol || '';
-      const conid = xfer.conid || xfer.conId || '';
+      const symbol = getAttr(xfer, 'symbol', 'ticker');
+      const conid = getAttr(xfer, 'conid', 'conId');
       const secId = conid ? `CON_${conid}` : `SYM_${symbol}`;
-      const rawDate = xfer.date || xfer.reportDate || xfer.dateTime?.substring(0, 10) || '';
-      const date = rawDate.replace(/\//g, '-');
-      const qty = Math.abs(parseFloat(xfer.quantity || '0'));
-      const grossAmount = Math.abs(parseFloat(xfer.costBasis || xfer.positionAmount || xfer.amount || '0'));
+      const rawDate = getAttr(xfer, 'date', 'reportDate', 'dateTime');
+      const { date } = parseIbkrDate(rawDate);
+      const qty = Math.abs(getNum(xfer, 'quantity', 'units'));
+      const grossAmount = Math.abs(getNum(xfer, 'costBasis', 'positionAmount', 'amount'));
       const price = qty > 0 && grossAmount > 0 ? grossAmount / qty : 0;
-      const currency = xfer.currency || 'USD';
-      const explicitFx = xfer.fxRateToBase ? parseFloat(xfer.fxRateToBase) : undefined;
+      const currency = getAttr(xfer, 'currency') || 'USD';
+      const rawFx = getAttr(xfer, 'fxRateToBase', 'fxRate');
+      const explicitFx = rawFx ? parseFloat(rawFx) : undefined;
       const { amountCad, fxRate, fxSource } = convertToCad(grossAmount, currency, date, explicitFx);
 
-      const dir = (xfer.direction || xfer.type || '').toUpperCase();
-      const isOut = dir.includes('OUT') || parseFloat(xfer.quantity || '0') < 0;
+      const xferId =
+        getAttr(xfer, 'transactionID', 'transferID') ||
+        `${date}_${symbol}_${qty}`;
+
+      const dir = (getAttr(xfer, 'direction', 'type', 'transferType') || '').toUpperCase();
+      const isOut = dir.includes('OUT') || getNum(xfer, 'quantity') < 0;
       const txType: Transaction['transactionType'] = isOut ? 'TRANSFER_OUT' : 'TRANSFER_IN';
 
-      const targetAcctId = xfer.targetAccount || xfer.targetAccountId || xfer.toAccount || xfer.fromAccount || '';
-      const targetAlias = (xfer.targetAccountAlias || xfer.targetAccountType || xfer.accountAlias || xfer.description || xfer.type || '').toUpperCase();
+      const targetAcctId = getAttr(xfer, 'targetAccount', 'targetAccountId', 'toAccount', 'fromAccount');
+      const targetAlias = (getAttr(xfer, 'targetAccountAlias', 'targetAccountType', 'accountAlias', 'description', 'type') || '').toUpperCase();
 
       const categorizeType = (id: string, aliasStr: string): Account['accountType'] | undefined => {
         if (id && accountsMap.has(id)) {
@@ -510,7 +738,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
 
       transactions.push({
         id: `IBKR_XFER_${xferId}`,
-        accountId: xfer.accountId || 'U_DEFAULT',
+        accountId: getAttr(xfer, 'accountId', 'account') || 'U_DEFAULT',
         targetAccountId: isOut ? targetAcctId : undefined,
         destinationAccountType: isOut ? otherAcctType : undefined,
         sourceAccountId: !isOut ? targetAcctId : undefined,
@@ -551,15 +779,29 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
     });
   }
 
+  const rawReferenceCode =
+    getAttr(parsed.FlexQueryResponse, 'queryId', 'queryID', 'referenceCode') ||
+    getAttr(parsed.FlexStatements, 'queryId', 'queryID') ||
+    getAttr(parsed, 'queryId');
+
+  const queryId =
+    getAttr(parsed.FlexQueryResponse, 'queryName', 'name') ||
+    getAttr(parsed.FlexStatements, 'queryName') ||
+    '';
+
+  const statementDate =
+    getAttr(parsed.FlexQueryResponse, 'whenGenerated', 'queryResponseDate') ||
+    getAttr(parsed.FlexStatements, 'whenGenerated') ||
+    '';
 
   return {
     accounts: Array.from(accountsMap.values()),
     securities: Array.from(securitiesMap.values()),
     transactions,
     openPositions,
-    rawReferenceCode: parsed.FlexQueryResponse?.queryId || parsed.FlexStatements?.queryId,
-    queryId: parsed.FlexQueryResponse?.queryName || '',
-    statementDate: parsed.FlexQueryResponse?.whenGenerated || parsed.FlexStatements?.whenGenerated,
+    rawReferenceCode,
+    queryId,
+    statementDate,
     hasCorporateActionsSection,
     hasTradesSection,
     hasCashTransactionsSection,
@@ -573,5 +815,5 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
     hasDateParseError,
     errors,
   };
-
 }
+

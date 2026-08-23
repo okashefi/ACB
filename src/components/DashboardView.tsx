@@ -22,7 +22,7 @@ import {
   Transaction,
   SecurityMaster,
 } from '../types/tax';
-import { formatCad, formatShares } from '../engine/decimal';
+import { formatCad, formatShares, d } from '../engine/decimal';
 
 interface DashboardViewProps {
   engineOutput: CalculationEngineOutput;
@@ -52,24 +52,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     ? engineOutput.realizedGainsLosses
     : engineOutput.realizedGainsLosses.filter((r) => r.taxYear === selectedTaxYear);
 
-  let yearGain = 0;
-  let yearLoss = 0;
+  let yearGain = d(0);
+  let yearLoss = d(0);
   filteredGains.forEach((r) => {
-    if (r.recognizedGainLossCad > 0) yearGain += r.recognizedGainLossCad;
-    else if (r.recognizedGainLossCad < 0) yearLoss += Math.abs(r.recognizedGainLossCad);
+    const val = d(r.recognizedGainLossCad);
+    if (val.gt(0)) yearGain = yearGain.plus(val);
+    else if (val.lt(0)) yearLoss = yearLoss.plus(val.abs());
   });
-  const netGainLoss = yearGain - yearLoss;
+  const netGainLoss = yearGain.minus(yearLoss);
 
   // Calculate total portfolio ACB
-  let totalPortfolioAcb = 0;
+  let totalPortfolioAcb = d(0);
   engineOutput.securityBalances.forEach((bal) => {
-    if (bal.quantity > 0) {
-      totalPortfolioAcb += bal.totalAcbCad;
+    if (d(bal.quantity).gt(0)) {
+      totalPortfolioAcb = totalPortfolioAcb.plus(d(bal.totalAcbCad));
     }
   });
 
   // Total superficial loss denied
-  const totalSuperficialDenied = engineOutput.superficialLosses.reduce((acc, s) => acc + s.deniedLossCad, 0);
+  const totalSuperficialDenied = engineOutput.superficialLosses.reduce(
+    (acc, s) => acc.plus(d(s.deniedLossCad)),
+    d(0)
+  );
 
   return (
     <div id="dashboard-container" className="space-y-6">
@@ -188,12 +192,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span className="text-xs font-medium text-[#71717A]">
               {selectedTaxYear === 'ALL' ? 'Total Realized Capital Gains' : `${selectedTaxYear} Net Capital Gains`}
             </span>
-            <div className={`p-1.5 rounded-lg ${netGainLoss >= 0 ? 'bg-[#ECFDF5] text-[#059669]' : 'bg-[#FEF2F2] text-[#DC2626]'}`}>
-              {netGainLoss >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+            <div className={`p-1.5 rounded-lg ${netGainLoss.gte(0) ? 'bg-[#ECFDF5] text-[#059669]' : 'bg-[#FEF2F2] text-[#DC2626]'}`}>
+              {netGainLoss.gte(0) ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
             </div>
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className={`text-2xl font-bold tracking-tight ${netGainLoss >= 0 ? 'text-[#059669]' : 'text-[#DC2626]'}`}>
+            <span className={`text-2xl font-bold tracking-tight ${netGainLoss.gte(0) ? 'text-[#059669]' : 'text-[#DC2626]'}`}>
               {formatCad(netGainLoss)}
             </span>
           </div>
@@ -217,7 +221,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </span>
           </div>
           <div className="mt-2.5 text-[11px] text-[#71717A] flex items-center justify-between border-t border-[#E4E4E7] pt-2 font-mono">
-            <span>Active Pools: {(Array.from(engineOutput.securityBalances.values()) as Array<{ quantity: number }>).filter(b => b.quantity > 0).length}</span>
+            <span>Active Pools: {(Array.from(engineOutput.securityBalances.values()) as Array<{ quantity: string }>).filter(b => d(b.quantity).gt(0)).length}</span>
             <span>ITA s. 47 Weighted Avg</span>
           </div>
         </div>
@@ -251,7 +255,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="mt-2">
             <span className="text-2xl font-bold tracking-tight text-[#18181B]">
-              {formatCad(engineOutput.incomeDistributions.dividendsCad + engineOutput.incomeDistributions.rocCad)}
+              {formatCad(d(engineOutput.incomeDistributions.dividendsCad).plus(d(engineOutput.incomeDistributions.rocCad)))}
             </span>
           </div>
           <div className="mt-2.5 text-[11px] text-[#71717A] flex items-center justify-between border-t border-[#E4E4E7] pt-2 font-mono">
@@ -294,7 +298,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </thead>
               <tbody className="divide-y divide-[#E4E4E7] font-mono">
                 {Array.from(engineOutput.securityBalances.entries())
-                  .filter(([_, b]) => b.quantity > 0)
+                  .filter(([_, b]) => d(b.quantity).gt(0))
                   .map(([secId, b]) => (
                     <tr key={secId} className="hover:bg-[#F9FAFB] transition-colors">
                       <td className="py-3 px-3.5">
@@ -317,7 +321,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       </td>
                     </tr>
                   ))}
-                {(Array.from(engineOutput.securityBalances.values()) as Array<{ quantity: number }>).filter(b => b.quantity > 0).length === 0 && (
+                {(Array.from(engineOutput.securityBalances.values()) as Array<{ quantity: string }>).filter(b => d(b.quantity).gt(0)).length === 0 && (
                   <tr>
                     <td colSpan={5} className="py-8 text-center text-[#71717A] font-sans text-xs">
                       No active positions in the ACB pool. Load demo data or connect your IBKR token to get started.
@@ -359,9 +363,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </div>
                 <div className="text-right">
                   <div className={`text-xs font-bold font-mono ${
-                    rgl.recognizedGainLossCad >= 0 ? 'text-[#059669]' : 'text-[#DC2626]'
+                    d(rgl.recognizedGainLossCad).gte(0) ? 'text-[#059669]' : 'text-[#DC2626]'
                   }`}>
-                    {rgl.recognizedGainLossCad >= 0 ? `+${formatCad(rgl.recognizedGainLossCad)}` : formatCad(rgl.recognizedGainLossCad)}
+                    {d(rgl.recognizedGainLossCad).gte(0) ? `+${formatCad(rgl.recognizedGainLossCad)}` : formatCad(rgl.recognizedGainLossCad)}
                   </div>
                   {rgl.isSuperficialLoss && (
                     <span className="inline-block px-1.5 py-0.2 rounded bg-[#F3E8FF] text-[#7E22CE] border border-[#DDD6FE] text-[9px] font-mono">
