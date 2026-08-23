@@ -33,6 +33,7 @@ interface DashboardViewProps {
   transactions: Transaction[];
   securities: SecurityMaster[];
   selectedTaxYear: number | 'ALL';
+  setSelectedTaxYear?: (year: number | 'ALL') => void;
   onNavigateToTab: (tab: any) => void;
   onOpenReview: (txId: string) => void;
 }
@@ -43,6 +44,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   transactions,
   securities,
   selectedTaxYear,
+  setSelectedTaxYear,
   onNavigateToTab,
   onOpenReview,
 }) => {
@@ -282,7 +284,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {yearlySummaries.map((ys) => (
                 <div
                   key={ys.year}
-                  onClick={() => onNavigateToTab('reports')}
+                  onClick={() => {
+                    if (setSelectedTaxYear) {
+                      setSelectedTaxYear(ys.year);
+                    }
+                    onNavigateToTab('reports');
+                  }}
                   className={`bg-white border rounded-2xl p-5 shadow-2xs hover:border-[#3B82F6] hover:shadow-xs transition-all cursor-pointer space-y-3 ${
                     selectedTaxYear === ys.year ? 'border-[#2563EB] ring-1 ring-[#2563EB]' : 'border-[#E4E4E7]'
                   }`}

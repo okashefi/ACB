@@ -199,13 +199,17 @@ export interface Transaction {
 }
 
 export interface SuperficialLossEvent {
+  id?: string;
   dispositionTransactionId: string;
   securityId: string;
   symbol: string;
   dispositionDate: string;
+  disposedShares?: string;
   rawCapitalLossCad: string; // Absolute amount of loss
+  grossLossCad?: string; // alias for rawCapitalLossCad
   deniedLossCad: string; // Amount deemed superficial
   allowedLossCad: string; // Loss recognized on Schedule 3
+  allowableLossCad?: string; // alias for allowedLossCad
   
   // Matching replacement
   replacementTransactionId?: string;
@@ -395,6 +399,10 @@ export interface T5008SlipEntry {
   proceedsCad: string; // Box 21 (Proceeds of disposition or settlement amount)
   bookValueCad?: string; // Box 20 (Cost or book value - Note: Broker book value is usually FIFO)
   currency?: string; // Box 22
+  fxRateUsed?: number;
+  originalCurrency?: string;
+  originalProceeds?: string;
+  originalBookValue?: string;
   rawLine?: string;
 }
 

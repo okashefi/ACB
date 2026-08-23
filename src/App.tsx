@@ -203,66 +203,78 @@ export function App() {
         });
       };
 
-      let results = [];
-      
-      if (isBackfill) {
-        // Year-by-year backfill for the last 5 years up to today
-        const currentYear = new Date().getFullYear();
-        for (let year = currentYear - 5; year <= currentYear; year++) {
-          const startDate = `${year}0101`;
-          const endDate = year === currentYear ? new Date().toISOString().slice(0, 10).replace(/-/g, '') : `${year}1231`;
-          const res = await fetchChunk(startDate, endDate);
-          if (res.success && res.parsedData) {
-            results.push(res);
-          } else if (res.errorCode === '1018') {
-             alert(`Year ${year} is older than Flex retention. Please import an opening ACB or use the CSV fallback for older data. Never clobbering an empty year.`);
-          } else if (!res.success) {
-             throw new Error(res.errorMessage || 'Unknown sync error');
+      let results: any[] = [];
+      const unavailableYears: number[] = [];
+      const currentYear = new Date().getFullYear();
+
+      // Find earliest account open year if available
+      let minAccountOpenYear = currentYear - 4;
+      accounts.forEach((acc) => {
+        if (acc.openDate) {
+          const y = parseInt(acc.openDate.substring(0, 4), 10);
+          if (!isNaN(y) && y < minAccountOpenYear) {
+            minAccountOpenYear = y;
           }
         }
-      } else {
-        // Incremental: last 3 days
-        const end = new Date();
-        const start = new Date(end.getTime() - 3 * 24 * 60 * 60 * 1000);
-        const startDate = start.toISOString().slice(0, 10).replace(/-/g, '');
-        const endDate = end.toISOString().slice(0, 10).replace(/-/g, '');
-        const res = await fetchChunk(startDate, endDate);
-        if (res.success) {
-          results.push(res);
-        } else {
-          throw new Error(res.errorMessage || 'Unknown sync error');
+      });
+      const startYear = Math.max(minAccountOpenYear, currentYear - 4);
+
+      if (isBackfill || true) { // Walk full CRA window (currentYear-4 through currentYear)
+        const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        for (let year = startYear; year <= currentYear; year++) {
+          const startDate = `${year}0101`;
+          const endDate = year === currentYear ? todayStr : `${year}1231`;
+          
+          try {
+            const res = await fetchChunk(startDate, endDate);
+            if (res.success && res.parsedData) {
+              const hasTrades = res.parsedData.transactions.length > 0 || res.parsedData.hasTradesSection || res.parsedData.hasCashTransactionsSection;
+              if (!hasTrades) {
+                unavailableYears.push(year);
+              } else {
+                results.push(res);
+              }
+            } else {
+              unavailableYears.push(year);
+            }
+          } catch (chunkErr) {
+            unavailableYears.push(year);
+          }
         }
       }
 
       if (results.length > 0) {
         const allParsed = results.map(r => r.parsedData).filter((p): p is NonNullable<typeof p> => Boolean(p));
         
-        // Rule 1 & 2: Replace accounts strictly with accounts present in the sync results (no leftover demo accounts)
-        const syncAccountsMap = new Map<string, Account>();
-        allParsed.forEach(parsed => {
-          parsed.accounts.forEach((a) => syncAccountsMap.set(a.id, a));
+        // Merge accounts
+        setAccounts((prev) => {
+          const map = new Map<string, Account>(prev.map((a) => [a.id, a]));
+          allParsed.forEach((parsed) => {
+            parsed.accounts.forEach((a) => map.set(a.id, a));
+          });
+          return Array.from(map.values());
         });
-        setAccounts(Array.from(syncAccountsMap.values()));
 
-        // Extract securities strictly from the sync results
-        const syncSecuritiesMap = new Map<string, SecurityMaster>();
-        allParsed.forEach(parsed => {
-          parsed.securities.forEach((s) => syncSecuritiesMap.set(s.id, s));
+        // Merge securities
+        setSecurities((prev) => {
+          const map = new Map<string, SecurityMaster>(prev.map((s) => [s.id, s]));
+          allParsed.forEach((parsed) => {
+            parsed.securities.forEach((s) => map.set(s.id, s));
+          });
+          return Array.from(map.values());
         });
-        setSecurities(Array.from(syncSecuritiesMap.values()));
 
-        // Merge transactions (deduplicating by ID) -> Cancellations void the original. Idempotent upsert.
+        // Merge transactions (upsert by ID, do not wipe earlier years)
+        let mergedTxList: Transaction[] = [];
         setTransactions((prev: Transaction[]) => {
           const map = new Map<string, Transaction>(prev.map((t) => [t.id, t]));
           
-          allParsed.forEach(parsed => {
+          allParsed.forEach((parsed) => {
             parsed.transactions.forEach((t: Transaction) => {
-              // Handle cancellations (often marked in XML but let's assume we remove if cancelled or we overwrite)
               if (t.isCancelled) {
-                 map.delete(t.id);
-                 return;
+                map.delete(t.id);
+                return;
               }
-              // Clobber protection for user CA
               const existing = map.get(t.id);
               if (existing && existing.status === 'approved' && existing.corporateAction && t.status === 'needs_review') {
                 t.status = 'approved';
@@ -272,7 +284,8 @@ export function App() {
             });
           });
           
-          return Array.from(map.values()).sort((a: Transaction, b: Transaction) => a.date.localeCompare(b.date));
+          mergedTxList = Array.from(map.values()).sort((a: Transaction, b: Transaction) => a.date.localeCompare(b.date));
+          return mergedTxList;
         });
 
         // Use open positions from the most recent result
@@ -286,6 +299,16 @@ export function App() {
           lastSyncTimestamp: new Date().toISOString(),
           lastSyncReferenceCode: results[results.length - 1].referenceCode,
         }));
+
+        // Calculate trade range for status alert
+        const tradeDates = mergedTxList.map((t) => t.date).sort();
+        const firstTradeDate = tradeDates[0] || 'N/A';
+        const lastTradeDate = tradeDates[tradeDates.length - 1] || 'N/A';
+
+        const unavailStr = unavailableYears.length > 0 ? ` (Unavailable/empty years: ${unavailableYears.join(', ')})` : '';
+        alert(`Pulled IBKR history from ${firstTradeDate} to ${lastTradeDate}. History before ${firstTradeDate} needs Opening ACB.${unavailStr}`);
+      } else {
+        alert(`No data retrieved from IBKR. Unavailable/empty years: ${unavailableYears.join(', ')}`);
       }
     } catch (e: any) {
       alert(`Sync error: ${e.message}`);
@@ -303,17 +326,62 @@ export function App() {
   };
 
   // Import parsed data complete
-  const handleImportComplete = (data: {
-    transactions: Transaction[];
-    accounts: Account[];
-    securities: SecurityMaster[];
-    openPositions: OpenPosition[];
-  }) => {
-    // Rule 1 & 2: Replace accounts directly with those in the imported statement
-    setAccounts(data.accounts);
-    setSecurities(data.securities);
-    setTransactions(data.transactions.sort((a: Transaction, b: Transaction) => a.date.localeCompare(b.date)));
-    setOpenPositions(data.openPositions || []);
+  const handleImportComplete = (
+    data: {
+      transactions: Transaction[];
+      accounts: Account[];
+      securities: SecurityMaster[];
+      openPositions: OpenPosition[];
+    },
+    importMode: 'merge' | 'replace' = 'merge'
+  ) => {
+    if (importMode === 'replace') {
+      setAccounts(data.accounts);
+      setSecurities(data.securities);
+      setTransactions(data.transactions.sort((a: Transaction, b: Transaction) => a.date.localeCompare(b.date)));
+      setOpenPositions(data.openPositions || []);
+    } else {
+      // Merge accounts
+      setAccounts((prev) => {
+        const map = new Map(prev.map((a) => [a.id, a]));
+        data.accounts.forEach((a) => map.set(a.id, a));
+        return Array.from(map.values());
+      });
+
+      // Merge securities
+      setSecurities((prev) => {
+        const map = new Map(prev.map((s) => [s.id, s]));
+        data.securities.forEach((s) => map.set(s.id, s));
+        return Array.from(map.values());
+      });
+
+      // Merge transactions by transaction ID (upsert)
+      setTransactions((prev) => {
+        const map = new Map<string, Transaction>(prev.map((t) => [t.id, t]));
+        data.transactions.forEach((t) => {
+          if (t.isCancelled) {
+            map.delete(t.id);
+          } else {
+            const existing = map.get(t.id);
+            if (existing && existing.status === 'approved' && existing.corporateAction && t.status === 'needs_review') {
+              t.status = 'approved';
+              t.corporateAction = existing.corporateAction;
+            }
+            map.set(t.id, t);
+          }
+        });
+        return Array.from(map.values()).sort((a: Transaction, b: Transaction) => a.date.localeCompare(b.date));
+      });
+
+      // Merge open positions
+      if (data.openPositions && data.openPositions.length > 0) {
+        setOpenPositions((prev) => {
+          const map = new Map(prev.map((p) => [`${p.accountId}_${p.securityId}`, p]));
+          data.openPositions.forEach((p) => map.set(`${p.accountId}_${p.securityId}`, p));
+          return Array.from(map.values());
+        });
+      }
+    }
   };
 
   // Corporate Action review confirmation
@@ -379,6 +447,7 @@ export function App() {
             transactions={transactions}
             securities={securities}
             selectedTaxYear={selectedTaxYear}
+            setSelectedTaxYear={setSelectedTaxYear}
             onNavigateToTab={(tab) => setActiveTab(tab)}
             onOpenReview={(txId) => setActiveTab('review')}
           />

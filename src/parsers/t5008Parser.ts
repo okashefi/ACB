@@ -1,4 +1,5 @@
 import { T5008SlipEntry } from '../types/tax';
+import { getBankOfCanadaRate } from '../engine/bocFx';
 
 /**
  * Parses a T5008 CSV or CRA Slip export.
@@ -70,6 +71,19 @@ export function parseT5008Csv(csvContent: string, taxYear?: number): T5008SlipEn
       symbol = symbol.split(' - ')[0].trim();
     }
 
+    const upperCurr = (currency || 'CAD').toUpperCase();
+    let fxRate = 1.0;
+    let proceedsCadVal = cleanProceeds;
+    let bookValueCadVal = cleanCost;
+
+    if (upperCurr !== 'CAD') {
+      fxRate = getBankOfCanadaRate(date, upperCurr);
+      proceedsCadVal = cleanProceeds * fxRate;
+      if (cleanCost !== undefined && !isNaN(cleanCost)) {
+        bookValueCadVal = cleanCost * fxRate;
+      }
+    }
+
     entries.push({
       id: `T5008_${rowYear}_${i}_${symbol}`,
       taxYear: rowYear,
@@ -77,9 +91,13 @@ export function parseT5008Csv(csvContent: string, taxYear?: number): T5008SlipEn
       symbol,
       securityDescription: symbol,
       quantity: cleanQty.toString(),
-      proceedsCad: cleanProceeds.toFixed(2),
-      bookValueCad: cleanCost !== undefined && !isNaN(cleanCost) ? cleanCost.toFixed(2) : undefined,
-      currency: currency || 'CAD',
+      proceedsCad: proceedsCadVal.toFixed(2),
+      bookValueCad: bookValueCadVal !== undefined && !isNaN(bookValueCadVal) ? bookValueCadVal.toFixed(2) : undefined,
+      currency: upperCurr,
+      fxRateUsed: fxRate,
+      originalCurrency: upperCurr,
+      originalProceeds: cleanProceeds.toFixed(2),
+      originalBookValue: cleanCost !== undefined && !isNaN(cleanCost) ? cleanCost.toFixed(2) : undefined,
       rawLine,
     });
   }

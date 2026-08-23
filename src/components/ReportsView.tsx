@@ -120,15 +120,29 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     const yearSlips = uploadedT5008Slips[activeYearInt] || [];
     const usedSlipIds = new Set<string>();
 
-    return filteredRealizedGains.map((rgl) => {
-      // Find matching T5008 slip by date and symbol
+    const getDayDiff = (d1: string, d2: string) => {
+      const t1 = new Date(d1).getTime();
+      const t2 = new Date(d2).getTime();
+      if (isNaN(t1) || isNaN(t2)) return 999;
+      return Math.abs((t1 - t2) / (1000 * 60 * 60 * 24));
+    };
+
+    const matchedRows: T5008DiscrepancyRow[] = filteredRealizedGains.map((rgl) => {
+      // Find matching T5008 slip by exact symbol, qty, and date within trade/settlement ±3 days
       const matchedSlip = yearSlips.find((slip) => {
         if (usedSlipIds.has(slip.id)) return false;
-        const symMatch = slip.symbol.toUpperCase() === rgl.symbol.toUpperCase() ||
-          slip.symbol.toUpperCase().startsWith(rgl.symbol.toUpperCase()) ||
-          rgl.symbol.toUpperCase().startsWith(slip.symbol.toUpperCase());
-        const dateMatch = slip.date === rgl.dispositionDate || slip.date === rgl.settlementDate;
-        return symMatch && dateMatch;
+        
+        const cleanSlipSym = slip.symbol.trim().toUpperCase();
+        const cleanRglSym = rgl.symbol.trim().toUpperCase();
+        if (cleanSlipSym !== cleanRglSym) return false;
+
+        const slipQty = Math.abs(parseFloat(slip.quantity) || 0);
+        const rglQty = Math.abs(parseFloat(rgl.quantityDisposed) || 0);
+        if (Math.abs(slipQty - rglQty) >= 0.001) return false;
+
+        const diffDisp = getDayDiff(slip.date, rgl.dispositionDate);
+        const diffSettle = rgl.settlementDate ? getDayDiff(slip.date, rgl.settlementDate) : 999;
+        return diffDisp <= 3 || diffSettle <= 3;
       });
 
       if (matchedSlip) {
@@ -165,7 +179,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         };
       }
 
-      // No uploaded T5008 file for this row - use App Schedule 3 numbers and indicate T5008 not loaded
+      // No matching T5008 line found for this disposition
       return {
         dispositionId: rgl.id,
         date: rgl.dispositionDate,
@@ -181,9 +195,35 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         deltaProceedsCad: null,
         deltaGainCad: null,
         status: 'T5008_NOT_LOADED',
-        notes: 'T5008 slip not loaded for this tax year',
+        notes: yearSlips.length > 0 ? 'No matching T5008 line found for this disposition' : 'T5008 slip not loaded for this tax year',
       };
     });
+
+    // Unmatched T5008 lines as EXTRA_T5008
+    const extraRows: T5008DiscrepancyRow[] = yearSlips
+      .filter((slip) => !usedSlipIds.has(slip.id))
+      .map((slip) => {
+        const fxNote = slip.currency && slip.currency !== 'CAD' ? ` (Converted from ${slip.currency} at ${slip.fxRateUsed || 1.35} CAD/${slip.currency})` : '';
+        return {
+          dispositionId: `EXTRA_${slip.id}`,
+          date: slip.date,
+          symbol: slip.symbol,
+          securityName: slip.securityDescription || slip.symbol,
+          quantityDisposed: slip.quantity,
+          appProceedsCad: '0.00',
+          appAcbCad: '0.00',
+          appOutlaysCad: '0.00',
+          appGainLossCad: '0.00',
+          t5008ProceedsCad: slip.proceedsCad,
+          t5008BookValueCad: slip.bookValueCad || null,
+          deltaProceedsCad: `-${slip.proceedsCad}`,
+          deltaGainCad: null,
+          status: 'EXTRA_T5008',
+          notes: `T5008 slip line reported by broker but no matching disposition in app ledger${fxNote}`,
+        };
+      });
+
+    return [...matchedRows, ...extraRows];
   }, [filteredRealizedGains, uploadedT5008Slips, activeYearInt]);
 
   // T5008 Totals
@@ -745,6 +785,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                             T5008 not loaded
                           </span>
                         )}
+                        {row.status === 'EXTRA_T5008' && (
+                          <span className="px-2 py-0.5 rounded-md bg-[#FEF2F2] text-[#DC2626] border border-[#FECACA] text-[10px] font-semibold">
+                            Unmatched T5008
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -926,36 +971,42 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#E4E4E7]">
-                  {superficialLossesList.map((sl) => (
-                    <tr key={sl.id} className="hover:bg-[#F9FAFB] transition-colors">
-                      <td className="py-3 px-3 text-[#18181B]">{sl.dispositionDate}</td>
-                      <td className="py-3 px-3 font-bold text-[#18181B]">{sl.symbol}</td>
-                      <td className="py-3 px-3 text-right text-[#18181B]">{formatShares(sl.disposedShares)}</td>
-                      <td className="py-3 px-3 text-right text-[#DC2626]">-{formatCad(sl.grossLossCad)}</td>
-                      <td className="py-3 px-3 text-right font-bold text-[#7C3AED]">-{formatCad(sl.deniedLossCad)}</td>
-                      <td className="py-3 px-3 text-right text-[#DC2626]">-{formatCad(sl.allowableLossCad)}</td>
-                      <td className="py-3 px-3 text-[#71717A] text-[11px] font-sans">
-                        {sl.replacementTransactionId ? (
-                          <div className="flex items-center gap-1 text-[#2563EB]">
-                            <LinkIcon className="w-3 h-3" />
-                            <span className="font-mono">{sl.replacementTransactionId}</span>
-                            <span className="text-[10px]">({sl.replacementDate})</span>
-                          </div>
-                        ) : (
-                          <span className="text-[#A1A1AA]">61-Day Overlap Pool</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3">
-                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${
-                          sl.isPermanentlyDeniedInRegistered
-                            ? 'bg-[#FEF2F2] text-[#DC2626] border border-[#FECACA]'
-                            : 'bg-[#F5F3FF] text-[#7C3AED] border border-[#DDD6FE]'
-                        }`}>
-                          {sl.isPermanentlyDeniedInRegistered ? 'Permanently Denied (TFSA/RRSP)' : 'Added to Replacement ACB'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {superficialLossesList.map((sl) => {
+                    const rowId = sl.id || sl.dispositionTransactionId;
+                    const disposedShares = sl.disposedShares || '0';
+                    const grossLoss = sl.grossLossCad || sl.rawCapitalLossCad || '0.00';
+                    const allowableLoss = sl.allowableLossCad || sl.allowedLossCad || '0.00';
+                    return (
+                      <tr key={rowId} className="hover:bg-[#F9FAFB] transition-colors">
+                        <td className="py-3 px-3 text-[#18181B]">{sl.dispositionDate}</td>
+                        <td className="py-3 px-3 font-bold text-[#18181B]">{sl.symbol}</td>
+                        <td className="py-3 px-3 text-right text-[#18181B]">{formatShares(disposedShares)}</td>
+                        <td className="py-3 px-3 text-right text-[#DC2626]">-{formatCad(grossLoss)}</td>
+                        <td className="py-3 px-3 text-right font-bold text-[#7C3AED]">-{formatCad(sl.deniedLossCad)}</td>
+                        <td className="py-3 px-3 text-right text-[#DC2626]">-{formatCad(allowableLoss)}</td>
+                        <td className="py-3 px-3 text-[#71717A] text-[11px] font-sans">
+                          {sl.replacementTransactionId ? (
+                            <div className="flex items-center gap-1 text-[#2563EB]">
+                              <LinkIcon className="w-3 h-3" />
+                              <span className="font-mono">{sl.replacementTransactionId}</span>
+                              <span className="text-[10px]">({sl.replacementDate})</span>
+                            </div>
+                          ) : (
+                            <span className="text-[#A1A1AA]">61-Day Overlap Pool</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-3">
+                          <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${
+                            sl.isPermanentlyDeniedInRegistered
+                              ? 'bg-[#FEF2F2] text-[#DC2626] border border-[#FECACA]'
+                              : 'bg-[#F5F3FF] text-[#7C3AED] border border-[#DDD6FE]'
+                          }`}>
+                            {sl.isPermanentlyDeniedInRegistered ? 'Permanently Denied (TFSA/RRSP)' : 'Added to Replacement ACB'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
 
                   {superficialLossesList.length === 0 && (
                     <tr>

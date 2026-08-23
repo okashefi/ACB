@@ -7,12 +7,15 @@ import { Transaction, Account, SecurityMaster, OpenPosition } from '../types/tax
 interface ImportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onImportComplete: (data: {
-    transactions: Transaction[];
-    accounts: Account[];
-    securities: SecurityMaster[];
-    openPositions: OpenPosition[];
-  }) => void;
+  onImportComplete: (
+    data: {
+      transactions: Transaction[];
+      accounts: Account[];
+      securities: SecurityMaster[];
+      openPositions: OpenPosition[];
+    },
+    importMode?: 'merge' | 'replace'
+  ) => void;
 }
 
 export const ImportModal: React.FC<ImportModalProps> = ({
@@ -23,7 +26,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   const [fileContent, setFileContent] = useState('');
   const [fileName, setFileName] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
-  const [importSummary, setImportSummary] = useState<string | null>(null);
+  const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
 
   if (!isOpen) return null;
 
@@ -54,7 +57,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         if (parsed.errors.length > 0) {
           setErrorMsg(`Parser warning: ${parsed.errors.join('; ')}`);
         }
-        onImportComplete(parsed);
+        onImportComplete(parsed, importMode);
         onClose();
       } else if (fileContent.includes(',') || fileContent.includes('Trades') || fileContent.includes('Data')) {
         // CSV parser
@@ -63,7 +66,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
           setErrorMsg('No trades found in CSV. Ensure this is an IBKR Activity Statement CSV export.');
           return;
         }
-        onImportComplete(parsed);
+        onImportComplete(parsed, importMode);
         onClose();
       } else {
         setErrorMsg('Unrecognized format. Please provide an IBKR Flex XML or Activity Statement CSV.');
@@ -110,12 +113,38 @@ export const ImportModal: React.FC<ImportModalProps> = ({
           <div>
             <label className="block text-[#71717A] mb-1 font-medium">Or Paste Statement Content:</label>
             <textarea
-              rows={5}
+              rows={4}
               placeholder="Paste raw XML (<FlexQueryResponse...>) or CSV text here..."
               value={fileContent}
               onChange={(e) => setFileContent(e.target.value)}
               className="w-full bg-[#F9FAFB] border border-[#E4E4E7] rounded-xl p-3 text-[#18181B] font-mono text-[11px] focus:outline-none focus:border-[#3B82F6] focus:bg-white transition-colors"
             />
+          </div>
+
+          <div className="bg-[#F9FAFB] border border-[#E4E4E7] rounded-xl p-3 space-y-2">
+            <span className="block font-semibold text-[#18181B] text-xs">Import Strategy:</span>
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-[#18181B]">
+              <input
+                type="radio"
+                name="importMode"
+                value="merge"
+                checked={importMode === 'merge'}
+                onChange={() => setImportMode('merge')}
+                className="text-[#2563EB]"
+              />
+              <span><strong>Merge additional year</strong> (upsert by trade ID, keep other years - default)</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-[#71717A]">
+              <input
+                type="radio"
+                name="importMode"
+                value="replace"
+                checked={importMode === 'replace'}
+                onChange={() => setImportMode('replace')}
+                className="text-[#2563EB]"
+              />
+              <span><strong>Replace all</strong> existing ledger transactions</span>
+            </label>
           </div>
 
           {errorMsg && (

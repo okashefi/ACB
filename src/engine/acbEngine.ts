@@ -747,13 +747,17 @@ export function runAcbEngine(
       if (isLoss) {
         const deniedAmt = rawGainLoss.abs();
         superficialLosses.push({
+          id: `SL_${tx.id}`,
           dispositionTransactionId: tx.id,
           securityId: canonicalId,
           symbol: canonicalSym,
           dispositionDate: tx.date,
+          disposedShares: toShares(qtyDisposed),
           rawCapitalLossCad: toMoney(deniedAmt),
+          grossLossCad: toMoney(deniedAmt),
           deniedLossCad: toMoney(deniedAmt),
           allowedLossCad: '0.00',
+          allowableLossCad: '0.00',
           replacementAccountId: tx.targetAccountId || tx.accountId,
           replacementDate: tx.date,
           isPermanentlyDeniedInRegistered: true,
@@ -858,13 +862,17 @@ export function runAcbEngine(
         finalRecognizedGainLoss = d(allowedAmt).negated();
 
         superficialLosses.push({
+          id: `SL_${tx.id}`,
           dispositionTransactionId: tx.id,
           securityId: canonicalId,
           symbol: canonicalSym,
           dispositionDate: tx.date,
+          disposedShares: toShares(qtyDisposed),
           rawCapitalLossCad: toMoney(rawGainLoss.abs()),
+          grossLossCad: toMoney(rawGainLoss.abs()),
           deniedLossCad: toMoney(deniedAmt),
           allowedLossCad: toMoney(allowedAmt),
+          allowableLossCad: toMoney(allowedAmt),
           replacementTransactionId: slCheck.replacementTransactionId,
           replacementAccountId: slCheck.replacementAccountId,
           replacementDate: slCheck.replacementDate,
