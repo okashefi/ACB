@@ -279,6 +279,10 @@ function main() {
   } else {
     process.stdout.write(reportText);
   }
+  if (failedFixtures.length > 0) {
+    console.error(`E2E failure: ${failedFixtures.length} fixture tests failed.`);
+    process.exit(1);
+  }
 }
 
 main();

@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { runAcbEngine } from '../acbEngine';
+import { runAcbEngine, reconcilePositions } from '../acbEngine';
 import { createMockAccount, createMockSecurity, createMockTransaction } from '../../../test/helpers';
 import { d } from '../decimal';
 
 describe('Canadian ACB Regression Suite - acbEngine (CPA-style)', () => {
-  const taxableAcct = createMockAccount({ id: 'ACCT_TAXABLE', accountId: 'U100100' });
-  const tfsaAcct = createMockAccount({ id: 'ACCT_TFSA', accountId: 'U100200', accountType: 'tfsa' });
-  const otherBrokerAcct = createMockAccount({ id: 'ACCT_QUESTRADE', accountId: 'Q998877', broker: 'Questrade' });
+  const taxableAcct = createMockAccount({ id: 'ACCT_TAXABLE', accountId: 'ACCT_TAXABLE' });
+  const tfsaAcct = createMockAccount({ id: 'ACCT_TFSA', accountId: 'ACCT_TFSA', accountType: 'tfsa' });
+  const otherBrokerAcct = createMockAccount({ id: 'ACCT_BROKER_2', accountId: 'ACCT_BROKER_2', broker: 'Other' });
 
   // ==========================================
   // MATRIX A: SECTION 47 POOLS
@@ -77,7 +77,7 @@ describe('Canadian ACB Regression Suite - acbEngine (CPA-style)', () => {
         }),
         createMockTransaction({
           id: 'T2_2',
-          accountId: 'ACCT_QUESTRADE', // Questrade
+          accountId: 'ACCT_BROKER_2', // Broker2
           securityId: 'SEC_BNS',
           symbol: 'BNS.TO',
           date: '2024-02-15',
@@ -88,7 +88,7 @@ describe('Canadian ACB Regression Suite - acbEngine (CPA-style)', () => {
         }),
         createMockTransaction({
           id: 'T2_3',
-          accountId: 'ACCT_QUESTRADE', // Questrade
+          accountId: 'ACCT_BROKER_2', // Broker2
           securityId: 'SEC_BNS',
           symbol: 'BNS.TO',
           date: '2024-04-20',
@@ -738,6 +738,156 @@ describe('Canadian ACB Regression Suite - acbEngine (CPA-style)', () => {
 
       expect(matchingTx.status).toBe('needs_review');
       expect(matchingTx.reasonCode).toBe('QTY_SHORTFALL');
+    });
+  });
+
+  // ==========================================
+  // MATRIX G: REGRESSIONS
+  // ==========================================
+  describe('Matrix G: Regressions (Shortfall quantities and ROC zero-ACB)', () => {
+    it('should compute partial shortfall ledger quantity change as coveredQty only, while transaction status warns of shortfall', () => {
+      const sec = createMockSecurity({ id: 'SEC_REG_SHORT', symbol: 'SHORTY' });
+      const txs = [
+        createMockTransaction({
+          id: 'REG_T1_1',
+          accountId: 'ACCT_TAXABLE',
+          securityId: 'SEC_REG_SHORT',
+          symbol: 'SHORTY',
+          date: '2024-05-10',
+          transactionType: 'BUY',
+          quantity: '100',
+          price: '10', // total ACB 1000
+        }),
+        createMockTransaction({
+          id: 'REG_T1_2',
+          accountId: 'ACCT_TAXABLE',
+          securityId: 'SEC_REG_SHORT',
+          symbol: 'SHORTY',
+          date: '2024-05-15',
+          transactionType: 'SELL',
+          quantity: '150', // Partial shortfall of 50 shares
+          price: '15',
+        }),
+      ];
+
+      const out = runAcbEngine(txs, [taxableAcct], [sec]);
+      const matchingTx = txs[1];
+
+      // Verifies that transaction is flagged as QTY_SHORTFALL
+      expect(matchingTx.status).toBe('needs_review');
+      expect(matchingTx.reasonCode).toBe('QTY_SHORTFALL');
+
+      // Ledger quantity change should be coveredQty only (-100, not -150)
+      const ledgerEntry = out.ledger.find((l) => l.transactionId === 'REG_T1_2');
+      expect(ledgerEntry).toBeDefined();
+      expect(ledgerEntry?.quantityChange).toBe('-100'); // coveredQty only
+      expect(ledgerEntry?.costChangeCad).toBe('-1000.00'); // covered ACB removed
+
+      // Realized gain covers only the 100 shares
+      const rgl = out.realizedGainsLosses.find((r) => r.dispositionTransactionId === 'REG_T1_2');
+      expect(rgl).toBeDefined();
+      expect(rgl?.quantityDisposed).toBe('100');
+      // Covered gain = 100 * 15 - 1000 = 500
+      expect(rgl?.recognizedGainLossCad).toBe('500.00');
+    });
+
+    it('should ensure zero ACB after ROC does not mark subsequent sells as MISSING_ACB', () => {
+      const sec = createMockSecurity({ id: 'SEC_REG_ROC', symbol: 'ZEROACB' });
+      const txs = [
+        createMockTransaction({
+          id: 'REG_T2_1',
+          accountId: 'ACCT_TAXABLE',
+          securityId: 'SEC_REG_ROC',
+          symbol: 'ZEROACB',
+          date: '2024-05-10',
+          transactionType: 'BUY',
+          quantity: '100',
+          price: '10', // total ACB 1000
+        }),
+        createMockTransaction({
+          id: 'REG_T2_2',
+          accountId: 'ACCT_TAXABLE',
+          securityId: 'SEC_REG_ROC',
+          symbol: 'ZEROACB',
+          date: '2024-05-12',
+          transactionType: 'RETURN_OF_CAPITAL',
+          quantity: '0',
+          price: '0',
+          amountCad: '1000', // reduces total ACB to exactly 0 while holding 100 shares
+        }),
+        createMockTransaction({
+          id: 'REG_T2_3',
+          accountId: 'ACCT_TAXABLE',
+          securityId: 'SEC_REG_ROC',
+          symbol: 'ZEROACB',
+          date: '2024-05-15',
+          transactionType: 'SELL',
+          quantity: '50', // sale of 50 shares
+          price: '15',
+        }),
+      ];
+
+      const out = runAcbEngine(txs, [taxableAcct], [sec]);
+      const rocTx = txs[1];
+      const sellTx = txs[2];
+
+      // ROC should not be flagged as needs review / missing ACB
+      expect(rocTx.status).not.toBe('needs_review');
+
+      // Subsequent sell should not flag MISSING_ACB since we hold 100 shares
+      expect(sellTx.status).not.toBe('needs_review');
+      expect(sellTx.reasonCode).toBeUndefined();
+
+      // Ledger entry for subsequent sell should have 0.00 cost change (since ACB is 0)
+      const ledgerEntry = out.ledger.find((l) => l.transactionId === 'REG_T2_3');
+      expect(ledgerEntry).toBeDefined();
+      expect(ledgerEntry?.costChangeCad).toBe('0.00');
+      expect(ledgerEntry?.realizedGainLossCad).toBe('750.00'); // 50 * 15 - 0 = 750 capital gain
+
+      // Realized gains should show the full proceeds as gain
+      const rgl = out.realizedGainsLosses.find((r) => r.dispositionTransactionId === 'REG_T2_3');
+      expect(rgl).toBeDefined();
+      expect(rgl?.quantityDisposed).toBe('50');
+      expect(rgl?.recognizedGainLossCad).toBe('750.00');
+    });
+
+    it('should correctly identify position breaks in reconcilePositions', () => {
+      const securityBalances = new Map();
+      securityBalances.set('SEC_A', {
+        id: 'SEC_A',
+        symbol: 'RY.TO',
+        quantity: d(100),
+        totalAcbCad: d(1500),
+      });
+
+      const brokerPositions = [
+        {
+          accountId: 'ACCT_TAXABLE',
+          conid: '12345',
+          symbol: 'RY.TO',
+          quantity: '120', // discrepancy of 20
+        },
+        {
+          accountId: 'ACCT_TAXABLE',
+          conid: '67890',
+          symbol: 'BNS.TO',
+          quantity: '50', // broker-reported position but calculated balance is 0
+        }
+      ];
+
+      const breaks = reconcilePositions(securityBalances, brokerPositions);
+      expect(breaks).toHaveLength(2);
+
+      const break1 = breaks.find((b) => b.symbol === 'RY.TO');
+      expect(break1).toBeDefined();
+      expect(break1?.status).toBe('QUANTITY_BREAK');
+      expect(break1?.quantityDiscrepancy).toBe('-20');
+
+      const break2 = breaks.find((b) => b.symbol === 'BNS.TO');
+      expect(break2).toBeDefined();
+      expect(break2?.status).toBe('QUANTITY_BREAK');
+      expect(break2?.calculatedQuantity).toBe('0');
+      expect(break2?.brokerReportedQuantity).toBe('50');
     });
   });
 });

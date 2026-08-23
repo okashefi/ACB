@@ -114,11 +114,43 @@ describe('Corporate Actions engine tests', () => {
           statutoryBasis: 'ITA s. 50(1)',
           brokerDescription: 'Worthless Securities Election',
         },
-        200,
-        4500
+          200,
+          4500
       );
       expect(res.realizedCapitalLossCad).toBe('4500.00');
       expect(res.oldSharesDisposedQty).toBe('200');
+    });
+
+    it('should calculate MIXED_RETURN_OF_CAPITAL and trigger capital gain if ROC exceeds old ACB', () => {
+      const res = calculateCorporateAction(
+        {
+          treatment: 'MIXED_RETURN_OF_CAPITAL',
+          oldSecurityId: 'SEC_XYZ',
+          totalCashReceived: '5000', // ROC of 5000 exceeds old ACB of 4500
+          newSharesReceived: '50',
+          statutoryBasis: 'ITA s. 53(2)',
+          brokerDescription: 'ROC mixed deal',
+        },
+        200,
+        4500
+      );
+      expect(res.newSharesTotalAcbCad).toBe('0.00');
+      expect(res.realizedCapitalGainCad).toBe('500.00'); // excess is gain
+    });
+
+    it('should support default unclassified corporate actions with CUSTOM_OVERRIDE fallback', () => {
+      const res = calculateCorporateAction(
+        {
+          treatment: 'CUSTOM_OVERRIDE' as any,
+          oldSecurityId: 'SEC_XYZ',
+          statutoryBasis: 'ITA s. 40',
+          brokerDescription: 'Default Fallback',
+        },
+        200,
+        4500
+      );
+      expect(res.treatment).toBe('CUSTOM_OVERRIDE');
+      expect(res.reviewRequired).toBe(true);
     });
   });
 });

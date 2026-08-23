@@ -1,12 +1,14 @@
 import { Account, SecurityMaster, Transaction, TransactionType, Currency } from '../../src/types/tax';
 import { d, toMoney, toShares, toRate, Decimal } from '../../src/engine/decimal';
 
+let txCounter = 0;
+
 export function createMockAccount(overrides: Partial<Account> = {}): Account {
   return {
     id: 'ACCT_TAXABLE',
-    accountId: 'U100100',
+    accountId: 'ACCT_TAXABLE',
     name: 'Standard Taxable Account',
-    broker: 'IBKR',
+    broker: 'Other',
     accountType: 'taxable',
     baseCurrency: 'CAD',
     isHouseholdAffiliate: false,
@@ -44,8 +46,10 @@ export function createMockTransaction(overrides: Partial<Transaction> = {}): Tra
   const commissionCad = toMoney(comm.times(fx));
   const totalOutlaysCad = toMoney(comm.times(fx));
 
+  txCounter++;
+
   return {
-    id: `TX_${Math.random().toString(36).substr(2, 9)}`,
+    id: overrides.id || `TX_${txCounter}`,
     accountId: 'ACCT_TAXABLE',
     securityId: 'SEC_ABC',
     symbol: 'ABC',

@@ -83,7 +83,9 @@ export function evaluateSuperficialLoss(
 
     if (!isAcquisition) continue;
 
-    if (isWithinSuperficialLossWindow(dispDate, tx.date)) {
+    const inWindow = isWithinSuperficialLossWindow(dispDate, tx.date);
+
+    if (inWindow) {
       totalAcquiredInWindow = totalAcquiredInWindow.plus(d(tx.quantity));
       if (!replacementTx) {
         replacementTx = tx;
@@ -96,9 +98,9 @@ export function evaluateSuperficialLoss(
   }
 
   // Also check if taxpayer still holds identical property at the end of the window
-  const hasRemainingPosition = d(postWindowSharesHeld).isPositive() || totalAcquiredInWindow.isPositive();
+  const hasRemainingPosition = d(postWindowSharesHeld).gt(0) || totalAcquiredInWindow.gt(0);
 
-  if (totalAcquiredInWindow.isPositive() && hasRemainingPosition) {
+  if (totalAcquiredInWindow.gt(0) && hasRemainingPosition) {
     // Pro-rata denial formula under ITA s. 54:
     // Denied ratio = min(1, min(DisposedQty, AcquiredInWindowQty) / DisposedQty)
     const minOverlapQty = Decimal.min(disposedQty, totalAcquiredInWindow, d(postWindowSharesHeld).plus(totalAcquiredInWindow));
