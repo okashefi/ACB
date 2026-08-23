@@ -19,12 +19,14 @@
 
 /* Custom app header layout classes to strictly prevent collisions */
 .appHeaderInner {
-  display: grid;
-  grid-template-columns: 230px minmax(0, 1fr) auto;
+  display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 16px;
   min-height: 72px;
-  padding: 0 24px;
+  padding: 0 16px;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
 }
 
 .brandCluster {
@@ -32,40 +34,44 @@
   overflow: hidden;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
 .primaryNav {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  justify-content: center;
+  display: none !important;
 }
 
 .headerActions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   white-space: nowrap;
+  min-width: 0;
 }
 
-/* Widths below 1440px media query */
-@media (max-width: 1439px) {
+/* Expanded navigation is opt-in for very wide screens only (>= 1536px CSS viewport width) */
+@media (min-width: 1536px) {
   .appHeaderInner {
-    grid-template-columns: 150px minmax(0, 1fr) auto;
+    display: grid;
+    grid-template-columns: 180px minmax(0, 1fr) auto;
+    gap: 16px;
+    padding: 0 24px;
   }
-}
 
-/* Widths below 1180px media query */
-@media (max-width: 1179px) {
-  .appHeaderInner {
-    display: flex;
-    justify-content: space-between;
-    min-height: 72px;
-    padding: 0 16px;
+  .brandCluster {
+    max-width: 180px;
+    gap: 12px;
   }
+
   .primaryNav {
-    display: none !important;
+    min-width: 0;
+    display: flex !important;
+    align-items: center;
+    gap: 4px;
+    justify-content: center;
+  }
+
+  .headerActions {
+    gap: 10px;
   }
 }
