@@ -384,3 +384,34 @@ export interface TaxSettings {
   inclusionRateRulesByYear: Record<number, { baseRate: string; highThresholdRate?: string; thresholdCad?: string }>;
   cpaReviewDisclaimerAcknowledged: boolean;
 }
+
+export interface T5008SlipEntry {
+  id: string;
+  taxYear: number;
+  date: string; // Box 13 (Settlement/Trade Date)
+  symbol: string; // Box 15 / Description
+  securityDescription?: string;
+  quantity: string; // Box 14
+  proceedsCad: string; // Box 21 (Proceeds of disposition or settlement amount)
+  bookValueCad?: string; // Box 20 (Cost or book value - Note: Broker book value is usually FIFO)
+  currency?: string; // Box 22
+  rawLine?: string;
+}
+
+export interface T5008DiscrepancyRow {
+  dispositionId: string;
+  date: string;
+  symbol: string;
+  securityName: string;
+  quantityDisposed: string;
+  appProceedsCad: string;
+  appAcbCad: string;
+  appOutlaysCad: string;
+  appGainLossCad: string;
+  t5008ProceedsCad: string | null;
+  t5008BookValueCad: string | null; // Labeled: not CRA ACB — usually FIFO
+  deltaProceedsCad: string | null; // app - t5008
+  deltaGainCad: string | null; // app gain - (t5008 proceeds - t5008 book)
+  status: 'MATCHED' | 'PROCEEDS_DIFFERENCE' | 'T5008_NOT_LOADED' | 'EXTRA_T5008';
+  notes?: string;
+}

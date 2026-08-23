@@ -138,28 +138,18 @@ export const Navbar: React.FC<NavbarProps> = ({
               </select>
             </div>
 
-            {/* Quick Actions */}
-            <button
-              id="btn-open-manual-entry"
-              onClick={onOpenManualEntry}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-[#F4F4F5] text-[#18181B] text-xs font-medium rounded-xl border border-[#E4E4E7] transition-colors shadow-2xs"
-              title="Add manual transaction or corporate action"
-            >
-              <PlusCircle className="w-3.5 h-3.5 text-[#2563EB]" />
-              <span>Add Entry</span>
-            </button>
-
+            {/* Quick Actions: Unified Data Path */}
             <button
               id="btn-open-import"
               onClick={onOpenImport}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-[#F4F4F5] text-[#18181B] text-xs font-medium rounded-xl border border-[#E4E4E7] transition-colors shadow-2xs"
-              title="Import Flex XML or Activity Statement CSV"
+              className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-[#F4F4F5] text-[#18181B] text-xs font-semibold rounded-xl border border-[#E4E4E7] transition-colors shadow-2xs"
+              title="Import Activity Flex XML or CSV statement"
             >
-              <UploadCloud className="w-3.5 h-3.5 text-[#71717A]" />
-              <span>Import</span>
+              <UploadCloud className="w-3.5 h-3.5 text-[#2563EB]" />
+              <span>Import File</span>
             </button>
 
-            {/* Sync Button */}
+            {/* Pull from IBKR Flex API Button */}
             <button
               id="btn-sync-ibkr"
               onClick={onTriggerSync}
@@ -169,9 +159,21 @@ export const Navbar: React.FC<NavbarProps> = ({
                   ? 'bg-zinc-700 cursor-wait'
                   : 'bg-[#18181B] hover:bg-black'
               }`}
+              title="Pull statements directly from IBKR Flex Web Service"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">{isSyncing ? 'Syncing...' : 'Sync IBKR'}</span>
+              <span>{isSyncing ? 'Pulling...' : 'Pull from IBKR'}</span>
+            </button>
+
+            {/* Adjust / Opening ACB Button for Gaps */}
+            <button
+              id="btn-open-manual-entry"
+              onClick={onOpenManualEntry}
+              className="hidden md:flex items-center gap-1.5 px-2.5 py-2 bg-[#F4F4F5] hover:bg-[#E4E4E7] text-[#71717A] hover:text-[#18181B] text-xs font-medium rounded-xl border border-[#E4E4E7] transition-colors"
+              title="Adjust or enter opening ACB / corporate action override for gaps"
+            >
+              <PlusCircle className="w-3.5 h-3.5 text-[#71717A]" />
+              <span>Adjust / Opening ACB</span>
             </button>
           </div>
         </div>

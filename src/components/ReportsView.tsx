@@ -19,14 +19,20 @@ import {
   Link as LinkIcon,
   ChevronRight,
   Sparkles,
+  Upload,
+  FileCode,
+  ArrowRight,
 } from 'lucide-react';
 import {
   CalculationEngineOutput,
   SecurityRollforward,
   RealizedGainLoss,
   SuperficialLossEvent,
+  T5008SlipEntry,
+  T5008DiscrepancyRow,
 } from '../types/tax';
 import { formatCad, formatShares, formatRate, d, toMoney } from '../engine/decimal';
+import { parseT5008Csv } from '../parsers/t5008Parser';
 
 interface ReportsViewProps {
   engineOutput: CalculationEngineOutput;
@@ -36,12 +42,11 @@ interface ReportsViewProps {
 }
 
 type ReportTab =
-  | 'rollforward'
   | 'schedule3'
+  | 't5008_diff'
+  | 'rollforward'
   | 'superficial'
   | 'dividends'
-  | 'schedule3_csv'
-  | 'ibkr_diff'
   | 'provenance';
 
 export const ReportsView: React.FC<ReportsViewProps> = ({
@@ -50,21 +55,17 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   availableTaxYears,
   setSelectedTaxYear,
 }) => {
-  const [activeReportTab, setActiveReportTab] = useState<ReportTab>('rollforward');
+  const [activeReportTab, setActiveReportTab] = useState<ReportTab>('schedule3');
   const [selectedAuditItem, setSelectedAuditItem] = useState<{ id: string; rule: string; details: string } | null>(null);
+  
+  // T5008 slips loaded per tax year (optional user upload for comparison)
+  const [uploadedT5008Slips, setUploadedT5008Slips] = useState<Record<number, T5008SlipEntry[]>>({});
+  const [t5008UploadMessage, setT5008UploadMessage] = useState<string | null>(null);
 
   // Active Tax Year integer
   const activeYearInt = typeof selectedTaxYear === 'number' ? selectedTaxYear : availableTaxYears[0] || 2024;
 
-  // 1. Rollforward Data for selected tax year
-  const rollforwardList = useMemo<SecurityRollforward[]>(() => {
-    const yearMap = engineOutput.rollforwardsByYear.get(activeYearInt);
-    if (!yearMap) return [];
-    const list: SecurityRollforward[] = Array.from(yearMap.values()) as SecurityRollforward[];
-    return list.sort((a, b) => a.symbol.localeCompare(b.symbol));
-  }, [engineOutput.rollforwardsByYear, activeYearInt]);
-
-  // 2. Realized Gains / Schedule 3 dispositions for selected tax year
+  // 1. Realized Gains / Schedule 3 dispositions for selected tax year
   const filteredRealizedGains = useMemo<RealizedGainLoss[]>(() => {
     return engineOutput.realizedGainsLosses.filter((g) => {
       if (selectedTaxYear === 'ALL') return true;
@@ -72,18 +73,36 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     });
   }, [engineOutput.realizedGainsLosses, selectedTaxYear]);
 
+  // 2. Rollforward Data for selected tax year
+  const rollforwardList = useMemo<SecurityRollforward[]>(() => {
+    const yearMap = engineOutput.rollforwardsByYear.get(activeYearInt);
+    if (!yearMap) return [];
+    const list: SecurityRollforward[] = Array.from(yearMap.values()) as SecurityRollforward[];
+    return list.sort((a, b) => a.symbol.localeCompare(b.symbol));
+  }, [engineOutput.rollforwardsByYear, activeYearInt]);
+
+  // 3. Superficial Losses
+  const superficialLossesList = useMemo<SuperficialLossEvent[]>(() => {
+    return engineOutput.superficialLosses.filter((s) => {
+      if (selectedTaxYear === 'ALL') return true;
+      return s.dispositionDate.startsWith(`${selectedTaxYear}-`);
+    });
+  }, [engineOutput.superficialLosses, selectedTaxYear]);
+
   // Totals for Schedule 3
   const schedule3Totals = useMemo(() => {
     let grossProceeds = d(0);
     let outlays = d(0);
     let acbRemoved = d(0);
     let recognized = d(0);
+    let deniedSuperficial = d(0);
 
     filteredRealizedGains.forEach((g) => {
       grossProceeds = grossProceeds.plus(d(g.grossProceedsCad));
       outlays = outlays.plus(d(g.dispositionOutlaysCad));
       acbRemoved = acbRemoved.plus(d(g.acbOfUnitsDisposedCad));
       recognized = recognized.plus(d(g.recognizedGainLossCad));
+      deniedSuperficial = deniedSuperficial.plus(d(g.superficialLossDeniedCad));
     });
 
     return {
@@ -91,14 +110,144 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       outlays: outlays.toString(),
       acbRemoved: acbRemoved.toString(),
       recognized: recognized.toString(),
+      deniedSuperficial: deniedSuperficial.toString(),
       recognizedIsPos: recognized.gte(0),
     };
   }, [filteredRealizedGains]);
 
-  // 3. Superficial Losses
-  const superficialLossesList = useMemo<SuperficialLossEvent[]>(() => {
-    return engineOutput.superficialLosses;
-  }, [engineOutput.superficialLosses]);
+  // 4. T5008 vs App Discrepancy Rows
+  const t5008DiscrepancyRows = useMemo<T5008DiscrepancyRow[]>(() => {
+    const yearSlips = uploadedT5008Slips[activeYearInt] || [];
+    const usedSlipIds = new Set<string>();
+
+    return filteredRealizedGains.map((rgl) => {
+      // Find matching T5008 slip by date and symbol
+      const matchedSlip = yearSlips.find((slip) => {
+        if (usedSlipIds.has(slip.id)) return false;
+        const symMatch = slip.symbol.toUpperCase() === rgl.symbol.toUpperCase() ||
+          slip.symbol.toUpperCase().startsWith(rgl.symbol.toUpperCase()) ||
+          rgl.symbol.toUpperCase().startsWith(slip.symbol.toUpperCase());
+        const dateMatch = slip.date === rgl.dispositionDate || slip.date === rgl.settlementDate;
+        return symMatch && dateMatch;
+      });
+
+      if (matchedSlip) {
+        usedSlipIds.add(matchedSlip.id);
+        const t5008Proc = d(matchedSlip.proceedsCad);
+        const appProc = d(rgl.grossProceedsCad);
+        const deltaProc = appProc.minus(t5008Proc);
+
+        const t5008Book = matchedSlip.bookValueCad ? d(matchedSlip.bookValueCad) : null;
+        let deltaGain: string | null = null;
+        if (t5008Book !== null) {
+          const t5008ImpliedGain = t5008Proc.minus(t5008Book);
+          deltaGain = d(rgl.recognizedGainLossCad).minus(t5008ImpliedGain).toString();
+        }
+
+        const isProcDiff = deltaProc.abs().gt(0.05);
+
+        return {
+          dispositionId: rgl.id,
+          date: rgl.dispositionDate,
+          symbol: rgl.symbol,
+          securityName: rgl.securityName,
+          quantityDisposed: rgl.quantityDisposed,
+          appProceedsCad: rgl.grossProceedsCad,
+          appAcbCad: rgl.acbOfUnitsDisposedCad,
+          appOutlaysCad: rgl.dispositionOutlaysCad,
+          appGainLossCad: rgl.recognizedGainLossCad,
+          t5008ProceedsCad: matchedSlip.proceedsCad,
+          t5008BookValueCad: matchedSlip.bookValueCad || null,
+          deltaProceedsCad: deltaProc.toString(),
+          deltaGainCad: deltaGain,
+          status: isProcDiff ? 'PROCEEDS_DIFFERENCE' : 'MATCHED',
+          notes: isProcDiff ? 'Proceeds differ (check settlement date vs trade date FX rate)' : 'Proceeds matched with T5008 slip',
+        };
+      }
+
+      // No uploaded T5008 file for this row - use App Schedule 3 numbers and indicate T5008 not loaded
+      return {
+        dispositionId: rgl.id,
+        date: rgl.dispositionDate,
+        symbol: rgl.symbol,
+        securityName: rgl.securityName,
+        quantityDisposed: rgl.quantityDisposed,
+        appProceedsCad: rgl.grossProceedsCad,
+        appAcbCad: rgl.acbOfUnitsDisposedCad,
+        appOutlaysCad: rgl.dispositionOutlaysCad,
+        appGainLossCad: rgl.recognizedGainLossCad,
+        t5008ProceedsCad: null,
+        t5008BookValueCad: null,
+        deltaProceedsCad: null,
+        deltaGainCad: null,
+        status: 'T5008_NOT_LOADED',
+        notes: 'T5008 slip not loaded for this tax year',
+      };
+    });
+  }, [filteredRealizedGains, uploadedT5008Slips, activeYearInt]);
+
+  // T5008 Totals
+  const t5008Totals = useMemo(() => {
+    let appProc = d(0);
+    let appAcb = d(0);
+    let appOutlays = d(0);
+    let appGain = d(0);
+    let t5008Proc = d(0);
+    let t5008Book = d(0);
+    let hasAnyT5008 = false;
+
+    t5008DiscrepancyRows.forEach((r) => {
+      appProc = appProc.plus(d(r.appProceedsCad));
+      appAcb = appAcb.plus(d(r.appAcbCad));
+      appOutlays = appOutlays.plus(d(r.appOutlaysCad));
+      appGain = appGain.plus(d(r.appGainLossCad));
+
+      if (r.t5008ProceedsCad !== null) {
+        hasAnyT5008 = true;
+        t5008Proc = t5008Proc.plus(d(r.t5008ProceedsCad));
+      }
+      if (r.t5008BookValueCad !== null) {
+        t5008Book = t5008Book.plus(d(r.t5008BookValueCad));
+      }
+    });
+
+    const deltaProc = hasAnyT5008 ? appProc.minus(t5008Proc) : null;
+    const deltaGain = hasAnyT5008 ? appGain.minus(t5008Proc.minus(t5008Book)) : null;
+
+    return {
+      appProc: appProc.toString(),
+      appAcb: appAcb.toString(),
+      appOutlays: appOutlays.toString(),
+      appGain: appGain.toString(),
+      t5008Proc: hasAnyT5008 ? t5008Proc.toString() : null,
+      t5008Book: hasAnyT5008 ? t5008Book.toString() : null,
+      deltaProc: deltaProc ? deltaProc.toString() : null,
+      deltaGain: deltaGain ? deltaGain.toString() : null,
+      hasAnyT5008,
+    };
+  }, [t5008DiscrepancyRows]);
+
+  // Handle T5008 CSV Upload for the active year
+  const handleT5008FileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const text = evt.target?.result as string;
+      if (text) {
+        const parsed = parseT5008Csv(text, activeYearInt);
+        setUploadedT5008Slips((prev) => ({
+          ...prev,
+          [activeYearInt]: parsed,
+        }));
+        setT5008UploadMessage(`Loaded ${parsed.length} T5008 slip lines for Tax Year ${activeYearInt}.`);
+        setTimeout(() => setT5008UploadMessage(null), 4000);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
 
   // Export Schedule 3 CSV
   const handleExportSchedule3Csv = () => {
@@ -149,6 +298,58 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     document.body.removeChild(link);
   };
 
+  // Export T5008 Discrepancy CSV
+  const handleExportT5008DiscrepancyCsv = () => {
+    const headers = [
+      'Disposition Date',
+      'Symbol',
+      'Security Name',
+      'Quantity Disposed',
+      'App Proceeds (CAD)',
+      'App ACB (CAD)',
+      'App Outlays (CAD)',
+      'App Capital Gain / (Loss) (CAD)',
+      'IBKR / T5008 Proceeds (CAD)',
+      'IBKR Book Value (CAD) [Not CRA ACB]',
+      'Delta Proceeds (CAD)',
+      'Delta Gain (CAD)',
+      'Status / Notes',
+    ];
+
+    const rows = t5008DiscrepancyRows.map((r) => [
+      r.date,
+      r.symbol,
+      `"${r.securityName.replace(/"/g, '""')}"`,
+      formatShares(r.quantityDisposed),
+      toMoney(r.appProceedsCad),
+      toMoney(r.appAcbCad),
+      toMoney(r.appOutlaysCad),
+      toMoney(r.appGainLossCad),
+      r.t5008ProceedsCad ? toMoney(r.t5008ProceedsCad) : 'N/A',
+      r.t5008BookValueCad ? toMoney(r.t5008BookValueCad) : 'N/A',
+      r.deltaProceedsCad ? toMoney(r.deltaProceedsCad) : 'N/A',
+      r.deltaGainCad ? toMoney(r.deltaGainCad) : 'N/A',
+      `"${r.notes || ''}"`,
+    ]);
+
+    const csvContent = 'data:text/csv;charset=utf-8,' + [
+      '# T5008 vs CRA SCHEDULE 3 DISCREPANCY RECONCILIATION REPORT',
+      '# DISCLAIMER: Do not copy IBKR book value onto Schedule 3. Use this app’s ACB. Use T5008 to check proceeds.',
+      `# Tax Year: ${activeYearInt} | Currency: Canadian Dollars (CAD)`,
+      headers.join(','),
+      ...rows.map((r) => r.join(',')),
+      `TOTALS,,,,${toMoney(t5008Totals.appProc)},${toMoney(t5008Totals.appAcb)},${toMoney(t5008Totals.appOutlays)},${toMoney(t5008Totals.appGain)},${t5008Totals.t5008Proc ? toMoney(t5008Totals.t5008Proc) : 'N/A'},${t5008Totals.t5008Book ? toMoney(t5008Totals.t5008Book) : 'N/A'},${t5008Totals.deltaProc ? toMoney(t5008Totals.deltaProc) : 'N/A'},${t5008Totals.deltaGain ? toMoney(t5008Totals.deltaGain) : 'N/A'},`,
+    ].join('\n');
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `T5008_vs_Schedule3_Discrepancy_${activeYearInt}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div id="reports-view-container" className="space-y-6">
       
@@ -160,12 +361,12 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             <span>Canadian Tax Reports & Schedule 3 Schedules</span>
           </h2>
           <p className="text-xs text-[#71717A] mt-0.5">
-            Compliant with the Income Tax Act (Canada), Form T1 Schedule 3, Form T1135, and CRA Information Circulars.
+            Compliant with the Income Tax Act (Canada), Form T1 Schedule 3, Form T5008 reconciliation, and CRA Information Circulars.
           </p>
         </div>
 
-        {/* Year Select & Export button */}
-        <div className="flex items-center gap-2">
+        {/* Year Select & Export buttons */}
+        <div className="flex items-center gap-2 flex-wrap">
           <select
             id="reports-year-select"
             value={selectedTaxYear}
@@ -180,14 +381,25 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             ))}
           </select>
 
-          <button
-            id="btn-export-schedule3-csv"
-            onClick={handleExportSchedule3Csv}
-            className="px-3.5 py-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-2 shadow-2xs"
-          >
-            <Download className="w-4 h-4" />
-            <span>Download Schedule 3 CSV</span>
-          </button>
+          {activeReportTab === 't5008_diff' ? (
+            <button
+              id="btn-export-t5008-csv"
+              onClick={handleExportT5008DiscrepancyCsv}
+              className="px-3.5 py-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-2 shadow-2xs"
+            >
+              <Download className="w-4 h-4" />
+              <span>Export T5008 Discrepancy CSV</span>
+            </button>
+          ) : (
+            <button
+              id="btn-export-schedule3-csv"
+              onClick={handleExportSchedule3Csv}
+              className="px-3.5 py-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-2 shadow-2xs"
+            >
+              <Download className="w-4 h-4" />
+              <span>Download Schedule 3 CSV</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -207,18 +419,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       {/* Sub-Navigation Tabs */}
       <div className="flex items-center gap-1 border-b border-[#E4E4E7] overflow-x-auto pb-px text-xs font-medium">
         <button
-          onClick={() => setActiveReportTab('rollforward')}
-          className={`px-4 py-2.5 rounded-t-xl transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
-            activeReportTab === 'rollforward'
-              ? 'border-[#2563EB] text-[#2563EB] bg-white font-semibold'
-              : 'border-transparent text-[#71717A] hover:text-[#18181B]'
-          }`}
-        >
-          <Layers className="w-4 h-4" />
-          <span>1. ACB Rollforward by Security</span>
-        </button>
-
-        <button
+          id="tab-btn-schedule3"
           onClick={() => setActiveReportTab('schedule3')}
           className={`px-4 py-2.5 rounded-t-xl transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
             activeReportTab === 'schedule3'
@@ -227,10 +428,37 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           }`}
         >
           <FileSpreadsheet className="w-4 h-4" />
-          <span>2. Realized Capital Gains (Schedule 3)</span>
+          <span>1. Schedule 3 (Capital Gains)</span>
         </button>
 
         <button
+          id="tab-btn-t5008-diff"
+          onClick={() => setActiveReportTab('t5008_diff')}
+          className={`px-4 py-2.5 rounded-t-xl transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
+            activeReportTab === 't5008_diff'
+              ? 'border-[#2563EB] text-[#2563EB] bg-white font-semibold'
+              : 'border-transparent text-[#71717A] hover:text-[#18181B]'
+          }`}
+        >
+          <TrendingUp className="w-4 h-4" />
+          <span>2. T5008 vs This App</span>
+        </button>
+
+        <button
+          id="tab-btn-rollforward"
+          onClick={() => setActiveReportTab('rollforward')}
+          className={`px-4 py-2.5 rounded-t-xl transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
+            activeReportTab === 'rollforward'
+              ? 'border-[#2563EB] text-[#2563EB] bg-white font-semibold'
+              : 'border-transparent text-[#71717A] hover:text-[#18181B]'
+          }`}
+        >
+          <Layers className="w-4 h-4" />
+          <span>3. ACB Rollforward by Security</span>
+        </button>
+
+        <button
+          id="tab-btn-superficial"
           onClick={() => setActiveReportTab('superficial')}
           className={`px-4 py-2.5 rounded-t-xl transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
             activeReportTab === 'superficial'
@@ -239,10 +467,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           }`}
         >
           <Scale className="w-4 h-4" />
-          <span>3. Superficial Losses Denied</span>
+          <span>4. Superficial Losses Denied (s. 54)</span>
         </button>
 
         <button
+          id="tab-btn-dividends"
           onClick={() => setActiveReportTab('dividends')}
           className={`px-4 py-2.5 rounded-t-xl transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
             activeReportTab === 'dividends'
@@ -251,22 +480,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           }`}
         >
           <DollarSign className="w-4 h-4" />
-          <span>4. Dividend & ROC Summary</span>
+          <span>5. Dividend & ROC Summary</span>
         </button>
 
         <button
-          onClick={() => setActiveReportTab('ibkr_diff')}
-          className={`px-4 py-2.5 rounded-t-xl transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
-            activeReportTab === 'ibkr_diff'
-              ? 'border-[#2563EB] text-[#2563EB] bg-white font-semibold'
-              : 'border-transparent text-[#71717A] hover:text-[#18181B]'
-          }`}
-        >
-          <TrendingUp className="w-4 h-4" />
-          <span>5. IBKR P&L Diff Reconciliation</span>
-        </button>
-
-        <button
+          id="tab-btn-provenance"
           onClick={() => setActiveReportTab('provenance')}
           className={`px-4 py-2.5 rounded-t-xl transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
             activeReportTab === 'provenance'
@@ -279,7 +497,341 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         </button>
       </div>
 
-      {/* TAB 1: ACB Rollforward by Security */}
+      {/* TAB 1: Realized Capital Gains (Schedule 3) */}
+      {activeReportTab === 'schedule3' && (
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+            <span className="text-[#71717A]">
+              Tax Year <strong>{selectedTaxYear}</strong> • Section 3: Qualified Publicly Traded Shares & Mutual Fund Units
+            </span>
+            <span className="text-[11px] text-[#A1A1AA] font-mono">
+              Proceeds - Outlays - ACB Removed = Realized Capital Gain / Loss (CAD)
+            </span>
+          </div>
+
+          <div className="bg-white border border-[#E4E4E7] rounded-2xl overflow-hidden shadow-2xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse font-mono">
+                <thead>
+                  <tr className="bg-[#F4F4F5] border-b border-[#E4E4E7] text-[#71717A] uppercase tracking-wider text-[10px]">
+                    <th className="py-3 px-3 font-semibold">Date</th>
+                    <th className="py-3 px-3 font-semibold">Symbol</th>
+                    <th className="py-3 px-3 font-semibold">Security Description</th>
+                    <th className="py-3 px-3 font-semibold text-right">Quantity</th>
+                    <th className="py-3 px-3 font-semibold text-right">Proceeds (CAD)</th>
+                    <th className="py-3 px-3 font-semibold text-right">ACB (CAD)</th>
+                    <th className="py-3 px-3 font-semibold text-right">Outlays (CAD)</th>
+                    <th className="py-3 px-3 font-semibold text-right">Gain / (Loss) (CAD)</th>
+                    <th className="py-3 px-3 font-semibold text-center">Audit</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#E4E4E7]">
+                  {filteredRealizedGains.map((rgl) => (
+                    <tr key={rgl.id} className="hover:bg-[#F9FAFB] transition-colors">
+                      <td className="py-3 px-3 text-[#18181B]">{rgl.dispositionDate}</td>
+                      <td className="py-3 px-3 font-bold text-[#18181B]">{rgl.symbol}</td>
+                      <td className="py-3 px-3 text-[#71717A] font-sans truncate max-w-[200px]">
+                        {rgl.securityName}
+                      </td>
+                      <td className="py-3 px-3 text-right text-[#18181B]">
+                        {formatShares(rgl.quantityDisposed)}
+                      </td>
+                      <td className="py-3 px-3 text-right text-[#18181B] font-medium">
+                        {formatCad(rgl.grossProceedsCad)}
+                      </td>
+                      <td className="py-3 px-3 text-right text-[#18181B]">
+                        {formatCad(rgl.acbOfUnitsDisposedCad)}
+                      </td>
+                      <td className="py-3 px-3 text-right text-[#71717A]">
+                        {formatCad(rgl.dispositionOutlaysCad)}
+                      </td>
+                      <td className="py-3 px-3 text-right font-bold">
+                        <span className={d(rgl.recognizedGainLossCad).gte(0) ? 'text-[#059669]' : 'text-[#DC2626]'}>
+                          {d(rgl.recognizedGainLossCad).gte(0) ? `+${formatCad(rgl.recognizedGainLossCad)}` : formatCad(rgl.recognizedGainLossCad)}
+                        </span>
+                        {rgl.isSuperficialLoss && (
+                          <div className="text-[9px] text-[#7C3AED] font-normal">
+                            Superficial: {formatCad(rgl.superficialLossDeniedCad)}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-3 px-3 text-center">
+                        <button
+                          onClick={() => setSelectedAuditItem({
+                            id: rgl.dispositionTransactionId,
+                            rule: rgl.statutoryCitations.join('; '),
+                            details: `Disposed ${formatShares(rgl.quantityDisposed)} units of ${rgl.symbol} on ${rgl.dispositionDate}. ACB removed: ${formatCad(rgl.acbOfUnitsDisposedCad)}. Outlays deducted: ${formatCad(rgl.dispositionOutlaysCad)}. Net Capital Gain/Loss: ${formatCad(rgl.recognizedGainLossCad)}.`,
+                          })}
+                          className="px-2 py-0.5 rounded bg-[#F4F4F5] hover:bg-[#E4E4E7] text-[#71717A] hover:text-[#18181B] text-[10px] transition-colors"
+                        >
+                          Audit
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+
+                  {filteredRealizedGains.length === 0 && (
+                    <tr>
+                      <td colSpan={9} className="py-12 text-center text-[#71717A] font-sans text-xs">
+                        No realized dispositions found for tax year {selectedTaxYear}.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+                {filteredRealizedGains.length > 0 && (
+                  <tfoot>
+                    <tr className="bg-[#F4F4F5] border-t-2 border-[#E4E4E7] font-bold text-[#18181B]">
+                      <td colSpan={4} className="py-3.5 px-3 uppercase text-[10px] text-[#71717A] font-sans">
+                        Schedule 3 Section 3 Totals ({filteredRealizedGains.length} Dispositions)
+                      </td>
+                      <td className="py-3.5 px-3 text-right">{formatCad(schedule3Totals.grossProceeds)}</td>
+                      <td className="py-3.5 px-3 text-right">{formatCad(schedule3Totals.acbRemoved)}</td>
+                      <td className="py-3.5 px-3 text-right">{formatCad(schedule3Totals.outlays)}</td>
+                      <td className="py-3.5 px-3 text-right">
+                        <span className={schedule3Totals.recognizedIsPos ? 'text-[#059669]' : 'text-[#DC2626]'}>
+                          {schedule3Totals.recognizedIsPos ? `+${formatCad(schedule3Totals.recognized)}` : formatCad(schedule3Totals.recognized)}
+                        </span>
+                      </td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: T5008 vs This App Discrepancy Report */}
+      {activeReportTab === 't5008_diff' && (
+        <div className="space-y-5">
+          
+          {/* Prominent Disclaimer & Regulatory Guidance */}
+          <div className="p-4 bg-[#FFFBEB] border border-[#FDE68A] rounded-2xl space-y-2 shadow-2xs">
+            <div className="flex items-center gap-2 text-[#92400E] font-bold text-xs">
+              <AlertCircle className="w-4 h-4 text-[#D97706] shrink-0" />
+              <span>CRA Filing Directive: T5008 Statement of Securities Transactions</span>
+            </div>
+            <p className="text-xs text-[#B45309] font-medium leading-relaxed">
+              <strong>Do not copy IBKR book value onto Schedule 3. Use this app’s ACB. Use T5008 to check proceeds.</strong>
+            </p>
+            <p className="text-[11px] text-[#92400E] leading-relaxed">
+              Broker T5008 Box 20 ("Cost or book value") is typically calculated using lot-by-lot FIFO and may not reflect Canadian tax rules. Canada’s <em>Income Tax Act</em> (s. 47) requires identical properties across all your non-registered accounts to share a single weighted-average Adjusted Cost Base in Canadian Dollars (CAD) calculated using Bank of Canada trade-date exchange rates (s. 261), adjusted for superficial loss deferrals (s. 54) and option assignments (s. 49).
+            </p>
+          </div>
+
+          {/* Optional T5008 CSV Upload Dropzone for active year */}
+          <div className="bg-white border border-[#E4E4E7] rounded-2xl p-4 shadow-2xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+            <div>
+              <div className="font-semibold text-[#18181B] flex items-center gap-2">
+                <Upload className="w-4 h-4 text-[#2563EB]" />
+                <span>Upload T5008 Slip CSV for Tax Year {activeYearInt} (Optional)</span>
+              </div>
+              <p className="text-[11px] text-[#71717A] mt-0.5">
+                Upload your broker's T5008 or tax software slip export to automatically reconcile Box 21 proceeds and identify Box 20 book value deltas. (Does not overwrite your ACB ledger).
+              </p>
+              {t5008UploadMessage && (
+                <div className="text-[11px] font-semibold text-[#059669] mt-1 flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>{t5008UploadMessage}</span>
+                </div>
+              )}
+            </div>
+
+            <label className="px-3.5 py-2 bg-[#18181B] hover:bg-black text-white rounded-xl text-xs font-semibold cursor-pointer shadow-xs transition-colors shrink-0 flex items-center gap-1.5">
+              <Upload className="w-3.5 h-3.5" />
+              <span>Choose T5008 CSV</span>
+              <input
+                type="file"
+                accept=".csv,.txt"
+                onChange={handleT5008FileUpload}
+                className="hidden"
+              />
+            </label>
+          </div>
+
+          {/* T5008 Discrepancy Table */}
+          <div className="bg-white border border-[#E4E4E7] rounded-2xl overflow-hidden shadow-2xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse font-mono">
+                <thead>
+                  <tr className="bg-[#F4F4F5] border-b border-[#E4E4E7] text-[#71717A] uppercase tracking-wider text-[10px]">
+                    <th className="py-3 px-3 font-semibold">Date</th>
+                    <th className="py-3 px-3 font-semibold">Symbol</th>
+                    <th className="py-3 px-3 font-semibold text-right">Qty</th>
+                    <th className="py-3 px-3 font-semibold text-right">App Proceeds (CAD)</th>
+                    <th className="py-3 px-3 font-semibold text-right">App ACB (CAD)</th>
+                    <th className="py-3 px-3 font-semibold text-right">App Outlays (CAD)</th>
+                    <th className="py-3 px-3 font-semibold text-right">App Gain/Loss (CAD)</th>
+                    <th className="py-3 px-3 font-semibold text-right">IBKR/T5008 Proceeds</th>
+                    <th className="py-3 px-3 font-semibold text-right">
+                      IBKR Book Value
+                      <span className="block text-[8px] font-sans font-normal text-[#D97706]">not CRA ACB — usually FIFO</span>
+                    </th>
+                    <th className="py-3 px-3 font-semibold text-right">Delta Proceeds</th>
+                    <th className="py-3 px-3 font-semibold text-right">Delta Gain</th>
+                    <th className="py-3 px-3 font-semibold text-center font-sans">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#E4E4E7]">
+                  {t5008DiscrepancyRows.map((row) => (
+                    <tr key={row.dispositionId} className="hover:bg-[#F9FAFB] transition-colors">
+                      <td className="py-3 px-3 text-[#18181B]">{row.date}</td>
+                      <td className="py-3 px-3 font-bold text-[#18181B]">
+                        {row.symbol}
+                      </td>
+                      <td className="py-3 px-3 text-right text-[#18181B]">
+                        {formatShares(row.quantityDisposed)}
+                      </td>
+                      <td className="py-3 px-3 text-right text-[#18181B] font-medium">
+                        {formatCad(row.appProceedsCad)}
+                      </td>
+                      <td className="py-3 px-3 text-right text-[#059669] font-medium">
+                        {formatCad(row.appAcbCad)}
+                      </td>
+                      <td className="py-3 px-3 text-right text-[#71717A]">
+                        {formatCad(row.appOutlaysCad)}
+                      </td>
+                      <td className="py-3 px-3 text-right font-bold">
+                        <span className={d(row.appGainLossCad).gte(0) ? 'text-[#059669]' : 'text-[#DC2626]'}>
+                          {d(row.appGainLossCad).gte(0) ? `+${formatCad(row.appGainLossCad)}` : formatCad(row.appGainLossCad)}
+                        </span>
+                      </td>
+                      <td className="py-3 px-3 text-right font-medium">
+                        {row.t5008ProceedsCad !== null ? (
+                          <span className="text-[#18181B]">{formatCad(row.t5008ProceedsCad)}</span>
+                        ) : (
+                          <span className="text-[#A1A1AA] italic text-[11px] font-sans">T5008 not loaded</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-3 text-right">
+                        {row.t5008BookValueCad !== null ? (
+                          <span className="text-[#71717A]">{formatCad(row.t5008BookValueCad)}</span>
+                        ) : (
+                          <span className="text-[#A1A1AA] italic text-[11px] font-sans">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-3 text-right font-medium">
+                        {row.deltaProceedsCad !== null ? (
+                          <span className={d(row.deltaProceedsCad).abs().lt(0.05) ? 'text-[#059669]' : 'text-[#D97706]'}>
+                            {formatCad(row.deltaProceedsCad)}
+                          </span>
+                        ) : (
+                          <span className="text-[#A1A1AA]">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-3 text-right font-medium">
+                        {row.deltaGainCad !== null ? (
+                          <span className={d(row.deltaGainCad).abs().lt(0.05) ? 'text-[#059669]' : 'text-[#2563EB]'}>
+                            {formatCad(row.deltaGainCad)}
+                          </span>
+                        ) : (
+                          <span className="text-[#A1A1AA]">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-3 text-center font-sans">
+                        {row.status === 'MATCHED' && (
+                          <span className="px-2 py-0.5 rounded-md bg-[#ECFDF5] text-[#059669] border border-[#A7F3D0] text-[10px] font-semibold">
+                            Matched
+                          </span>
+                        )}
+                        {row.status === 'PROCEEDS_DIFFERENCE' && (
+                          <span className="px-2 py-0.5 rounded-md bg-[#FFFBEB] text-[#D97706] border border-[#FDE68A] text-[10px] font-semibold">
+                            Proceeds Delta
+                          </span>
+                        )}
+                        {row.status === 'T5008_NOT_LOADED' && (
+                          <span className="px-2 py-0.5 rounded-md bg-[#F4F4F5] text-[#71717A] border border-[#E4E4E7] text-[10px]">
+                            T5008 not loaded
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+
+                  {t5008DiscrepancyRows.length === 0 && (
+                    <tr>
+                      <td colSpan={12} className="py-12 text-center text-[#71717A] font-sans text-xs">
+                        No taxable dispositions in Tax Year {selectedTaxYear}.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+                {t5008DiscrepancyRows.length > 0 && (
+                  <tfoot>
+                    <tr className="bg-[#F4F4F5] border-t-2 border-[#E4E4E7] font-bold text-[#18181B]">
+                      <td colSpan={3} className="py-3.5 px-3 uppercase text-[10px] text-[#71717A] font-sans">
+                        Totals ({t5008DiscrepancyRows.length} Dispositions)
+                      </td>
+                      <td className="py-3.5 px-3 text-right">{formatCad(t5008Totals.appProc)}</td>
+                      <td className="py-3.5 px-3 text-right text-[#059669]">{formatCad(t5008Totals.appAcb)}</td>
+                      <td className="py-3.5 px-3 text-right text-[#71717A]">{formatCad(t5008Totals.appOutlays)}</td>
+                      <td className="py-3.5 px-3 text-right">
+                        <span className={d(t5008Totals.appGain).gte(0) ? 'text-[#059669]' : 'text-[#DC2626]'}>
+                          {d(t5008Totals.appGain).gte(0) ? `+${formatCad(t5008Totals.appGain)}` : formatCad(t5008Totals.appGain)}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-3 text-right">
+                        {t5008Totals.t5008Proc !== null ? formatCad(t5008Totals.t5008Proc) : '—'}
+                      </td>
+                      <td className="py-3.5 px-3 text-right">
+                        {t5008Totals.t5008Book !== null ? formatCad(t5008Totals.t5008Book) : '—'}
+                      </td>
+                      <td className="py-3.5 px-3 text-right">
+                        {t5008Totals.deltaProc !== null ? formatCad(t5008Totals.deltaProc) : '—'}
+                      </td>
+                      <td className="py-3.5 px-3 text-right">
+                        {t5008Totals.deltaGain !== null ? formatCad(t5008Totals.deltaGain) : '—'}
+                      </td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
+
+          {/* Technical Explanations of Systematic Discrepancies */}
+          <div className="bg-white border border-[#E4E4E7] rounded-2xl p-6 shadow-2xs space-y-4 text-xs">
+            <h3 className="font-bold text-sm text-[#18181B] flex items-center gap-2">
+              <Info className="w-4 h-4 text-[#2563EB]" />
+              <span>Why IBKR Broker Book Value Differs From CRA Schedule 3 ACB</span>
+            </h3>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-[11px] text-[#71717A] leading-relaxed">
+              <div className="p-4 bg-[#F9FAFB] border border-[#E4E4E7] rounded-xl space-y-1.5">
+                <div className="font-bold text-xs text-[#18181B]">1. Cost Method: CRA Average Cost Pool (ITA s. 47) vs FIFO</div>
+                <p>
+                  IBKR tracks cost basis using First-In First-Out (FIFO) or LIFO on a per-account basis. Under Canadian tax law (ITA s. 47(1)), all identical shares held across all your non-registered taxable accounts must be pooled into a single weighted average cost base.
+                </p>
+              </div>
+
+              <div className="p-4 bg-[#F9FAFB] border border-[#E4E4E7] rounded-xl space-y-1.5">
+                <div className="font-bold text-xs text-[#18181B]">2. Foreign Exchange Rates: Bank of Canada Trade Date (ITA s. 261)</div>
+                <p>
+                  IBKR reports gains in USD and converts the net gain using current spot rates. The CRA requires each acquisition cost and each disposition proceed to be converted into CAD on its respective trade date using official Bank of Canada daily exchange rates.
+                </p>
+              </div>
+
+              <div className="p-4 bg-[#F9FAFB] border border-[#E4E4E7] rounded-xl space-y-1.5">
+                <div className="font-bold text-xs text-[#18181B]">3. Superficial Loss Deferrals (ITA s. 54 / s. 40(2)(g)(i))</div>
+                <p>
+                  If you or an affiliated person (such as your spouse or TFSA/RRSP) re-acquires the same security within the 61-day superficial loss window, the loss is denied and added to the ACB of the replacement property under ITA s. 53(1)(f). Broker book values do not adjust for Canadian superficial loss rules.
+                </p>
+              </div>
+
+              <div className="p-4 bg-[#F9FAFB] border border-[#E4E4E7] rounded-xl space-y-1.5">
+                <div className="font-bold text-xs text-[#18181B]">4. Option Exercises and Assignments (ITA s. 49)</div>
+                <p>
+                  When call options are exercised or put options are assigned, the premium paid or received is rolled directly into the share acquisition ACB or disposition proceeds under ITA s. 49, whereas brokers frequently report option closes separately.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 3: ACB Rollforward by Security */}
       {activeReportTab === 'rollforward' && (
         <div className="space-y-4">
           <div className="flex justify-between items-center text-xs">
@@ -300,45 +852,41 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                     <th className="py-3 px-3 font-semibold text-right">Opening Qty</th>
                     <th className="py-3 px-3 font-semibold text-right">Opening ACB (CAD)</th>
                     <th className="py-3 px-3 font-semibold text-right">Acquisitions (CAD)</th>
-                    <th className="py-3 px-3 font-semibold text-right">Dispositions ACB (CAD)</th>
-                    <th className="py-3 px-3 font-semibold text-right">ROC Reductions</th>
-                    <th className="py-3 px-3 font-semibold text-right">Superficial Add-Backs</th>
+                    <th className="py-3 px-3 font-semibold text-right">Dispositions ACB</th>
+                    <th className="py-3 px-3 font-semibold text-right">ROC (CAD)</th>
+                    <th className="py-3 px-3 font-semibold text-right">Superficial Add (CAD)</th>
                     <th className="py-3 px-3 font-semibold text-right">Closing Qty</th>
-                    <th className="py-3 px-3 font-semibold text-right">Closing Total ACB</th>
-                    <th className="py-3 px-3 font-semibold text-right">Closing ACB / Unit</th>
+                    <th className="py-3 px-3 font-semibold text-right">Closing ACB (CAD)</th>
+                    <th className="py-3 px-3 font-semibold text-right">ACB / Unit</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#E4E4E7] font-mono">
                   {rollforwardList.map((rf) => (
-                    <tr
-                      key={rf.securityId}
-                      onClick={() => setSelectedAuditItem({
-                        id: rf.symbol,
-                        rule: 'ITA s. 47(1) Identical Property Rollforward',
-                        details: `Opening ACB: ${formatCad(rf.openingAcbCad)} | Acquisitions: ${formatCad(rf.acquisitionsCostCad)} | Dispositions ACB removed: ${formatCad(rf.dispositionsAcbRemovedCad)} | Closing Total ACB: ${formatCad(rf.closingTotalAcbCad)} across ${formatShares(rf.closingQuantity)} units.`
-                      })}
-                      className="hover:bg-[#F9FAFB] cursor-pointer transition-colors"
-                    >
-                      <td className="py-3 px-3 font-bold text-[#18181B]">
-                        <div>{rf.symbol}</div>
-                        <div className="text-[10px] font-normal text-[#71717A] font-sans truncate max-w-[120px]">{rf.name}</div>
+                    <tr key={rf.securityId} className="hover:bg-[#F9FAFB] transition-colors">
+                      <td className="py-3 px-3">
+                        <div className="font-bold text-[#18181B]">{rf.symbol}</div>
+                        <div className="text-[11px] text-[#71717A] font-sans truncate max-w-[150px]">{rf.name}</div>
                       </td>
                       <td className="py-3 px-3 text-right text-[#71717A]">{formatShares(rf.openingQuantity)}</td>
-                      <td className="py-3 px-3 text-right font-medium text-[#18181B]">{formatCad(rf.openingAcbCad)}</td>
+                      <td className="py-3 px-3 text-right text-[#71717A]">{formatCad(rf.openingAcbCad)}</td>
                       <td className="py-3 px-3 text-right text-[#059669]">+{formatCad(rf.acquisitionsCostCad)}</td>
                       <td className="py-3 px-3 text-right text-[#DC2626]">-{formatCad(rf.dispositionsAcbRemovedCad)}</td>
-                      <td className="py-3 px-3 text-right text-[#D97706]">{d(rf.rocAdjustmentsCad).gt(0) ? `-${formatCad(rf.rocAdjustmentsCad)}` : '—'}</td>
-                      <td className="py-3 px-3 text-right text-[#7C3AED]">{d(rf.superficialLossAdditionsCad).gt(0) ? `+${formatCad(rf.superficialLossAdditionsCad)}` : '—'}</td>
-                      <td className="py-3 px-3 text-right font-bold text-[#18181B]">{formatShares(rf.closingQuantity)}</td>
-                      <td className="py-3 px-3 text-right font-bold text-[#059669]">{formatCad(rf.closingTotalAcbCad)}</td>
-                      <td className="py-3 px-3 text-right text-[#18181B] font-semibold">{formatCad(rf.closingAcbPerUnitCad)}</td>
+                      <td className="py-3 px-3 text-right text-[#D97706]">
+                        {d(rf.rocAdjustmentsCad).gt(0) ? `-${formatCad(rf.rocAdjustmentsCad)}` : '—'}
+                      </td>
+                      <td className="py-3 px-3 text-right text-[#7C3AED]">
+                        {d(rf.superficialLossAdditionsCad).gt(0) ? `+${formatCad(rf.superficialLossAdditionsCad)}` : '—'}
+                      </td>
+                      <td className="py-3 px-3 text-right font-medium text-[#18181B]">{formatShares(rf.closingQuantity)}</td>
+                      <td className="py-3 px-3 text-right font-bold text-[#18181B]">{formatCad(rf.closingTotalAcbCad)}</td>
+                      <td className="py-3 px-3 text-right text-[#71717A]">{formatCad(rf.closingAcbPerUnitCad)}</td>
                     </tr>
                   ))}
 
                   {rollforwardList.length === 0 && (
                     <tr>
                       <td colSpan={10} className="py-12 text-center text-[#71717A] font-sans text-xs">
-                        No rollforward positions recorded for tax year {activeYearInt}.
+                        No transactions recorded for tax year {activeYearInt}.
                       </td>
                     </tr>
                   )}
@@ -349,154 +897,43 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         </div>
       )}
 
-      {/* TAB 2: Realized Capital Gains (Schedule 3) */}
-      {activeReportTab === 'schedule3' && (
-        <div className="space-y-4">
-          
-          {/* Summary Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 text-xs font-mono">
-            <div className="p-4 bg-white border border-[#E4E4E7] rounded-2xl shadow-2xs">
-              <div className="text-[10px] text-[#71717A] uppercase font-sans font-semibold">Total Proceeds of Disposition</div>
-              <div className="text-base font-bold text-[#18181B] mt-1">{formatCad(schedule3Totals.grossProceeds)}</div>
-            </div>
-
-            <div className="p-4 bg-white border border-[#E4E4E7] rounded-2xl shadow-2xs">
-              <div className="text-[10px] text-[#71717A] uppercase font-sans font-semibold">Total Adjusted Cost Base (ACB)</div>
-              <div className="text-base font-bold text-[#18181B] mt-1">{formatCad(schedule3Totals.acbRemoved)}</div>
-            </div>
-
-            <div className="p-4 bg-white border border-[#E4E4E7] rounded-2xl shadow-2xs">
-              <div className="text-[10px] text-[#71717A] uppercase font-sans font-semibold">Outlays & Expenses (Commissions)</div>
-              <div className="text-base font-bold text-[#71717A] mt-1">{formatCad(schedule3Totals.outlays)}</div>
-            </div>
-
-            <div className="p-4 bg-white border border-[#BFDBFE] rounded-2xl shadow-2xs bg-[#EFF6FF]">
-              <div className="text-[10px] text-[#1D4ED8] uppercase font-sans font-semibold">Schedule 3 Net Capital Gain / (Loss)</div>
-              <div className={`text-base font-bold mt-1 ${schedule3Totals.recognizedIsPos ? 'text-[#059669]' : 'text-[#DC2626]'}`}>
-                {schedule3Totals.recognizedIsPos ? `+${formatCad(schedule3Totals.recognized)}` : formatCad(schedule3Totals.recognized)}
-              </div>
-            </div>
-          </div>
-
-          {/* Schedule 3 Table */}
-          <div className="bg-white border border-[#E4E4E7] rounded-2xl overflow-hidden shadow-2xs">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-[#F4F4F5] border-b border-[#E4E4E7] text-[#71717A] uppercase tracking-wider text-[10px] font-mono">
-                    <th className="py-3 px-3 font-semibold">Tx ID / Date</th>
-                    <th className="py-3 px-3 font-semibold">Security Disposed</th>
-                    <th className="py-3 px-3 font-semibold text-right">Units</th>
-                    <th className="py-3 px-3 font-semibold text-right">Proceeds of Disposition</th>
-                    <th className="py-3 px-3 font-semibold text-right">Adjusted Cost Base</th>
-                    <th className="py-3 px-3 font-semibold text-right">Outlays (Fees)</th>
-                    <th className="py-3 px-3 font-semibold text-right">Superficial Denied</th>
-                    <th className="py-3 px-3 font-semibold text-right">Recognized Gain / (Loss)</th>
-                    <th className="py-3 px-3 font-semibold text-center">Rule</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#E4E4E7] font-mono">
-                  {filteredRealizedGains.map((g) => (
-                    <tr
-                      key={g.id}
-                      onClick={() => setSelectedAuditItem({
-                        id: g.dispositionTransactionId,
-                        rule: g.statutoryCitations.join(', '),
-                        details: `${g.symbol} disposed on ${g.dispositionDate}. Proceeds: ${formatCad(g.grossProceedsCad)}, ACB: ${formatCad(g.acbOfUnitsDisposedCad)}, Outlays: ${formatCad(g.dispositionOutlaysCad)}. Recognized: ${formatCad(g.recognizedGainLossCad)} CAD.`
-                      })}
-                      className="hover:bg-[#F9FAFB] cursor-pointer transition-colors"
-                    >
-                      <td className="py-3 px-3 whitespace-nowrap">
-                        <div className="text-[#18181B] font-medium">{g.dispositionDate}</div>
-                        <div className="text-[9px] text-[#A1A1AA] font-mono">{g.dispositionTransactionId}</div>
-                      </td>
-                      <td className="py-3 px-3">
-                        <span className="font-bold text-[#18181B]">{g.symbol}</span>
-                        <div className="text-[10px] text-[#71717A] font-sans truncate max-w-[120px]">{g.securityName}</div>
-                      </td>
-                      <td className="py-3 px-3 text-right text-[#18181B]">{formatShares(g.quantityDisposed)}</td>
-                      <td className="py-3 px-3 text-right font-medium text-[#18181B]">{formatCad(g.grossProceedsCad)}</td>
-                      <td className="py-3 px-3 text-right text-[#71717A]">{formatCad(g.acbOfUnitsDisposedCad)}</td>
-                      <td className="py-3 px-3 text-right text-[#71717A]">{formatCad(g.dispositionOutlaysCad)}</td>
-                      <td className="py-3 px-3 text-right">
-                        {d(g.superficialLossDeniedCad).gt(0) ? (
-                          <span className="text-[#7C3AED] font-semibold">+{formatCad(g.superficialLossDeniedCad)}</span>
-                        ) : (
-                          <span className="text-[#D4D4D8]">—</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3 text-right font-bold">
-                        <span className={d(g.recognizedGainLossCad).gte(0) ? 'text-[#059669]' : 'text-[#DC2626]'}>
-                          {d(g.recognizedGainLossCad).gte(0) ? `+${formatCad(g.recognizedGainLossCad)}` : formatCad(g.recognizedGainLossCad)}
-                        </span>
-                      </td>
-                      <td className="py-3 px-3 text-center">
-                        <span className="px-2 py-0.5 rounded-md bg-[#EFF6FF] text-[#2563EB] text-[10px] border border-[#BFDBFE]">
-                          {g.statutoryCitations[0] || 'ITA s. 40'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-
-                  {filteredRealizedGains.length === 0 && (
-                    <tr>
-                      <td colSpan={9} className="py-12 text-center text-[#71717A] font-sans text-xs">
-                        No realized dispositions recorded for tax year {selectedTaxYear}.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 3: Superficial Losses Denied Register */}
+      {/* TAB 4: Superficial Loss Schedule */}
       {activeReportTab === 'superficial' && (
         <div className="space-y-4">
           <div className="p-4 bg-[#F5F3FF] border border-[#DDD6FE] rounded-2xl text-xs text-[#5B21B6] space-y-1">
-            <div className="font-bold flex items-center gap-1.5">
+            <div className="font-bold flex items-center gap-1.5 text-xs">
               <Scale className="w-4 h-4 text-[#7C3AED]" />
-              <span>Income Tax Act (Canada) ss. 40(2)(g)(i) & 54 Superficial Loss Rules</span>
+              <span>CRA Superficial Loss Rules (ITA s. 54, s. 40(2)(g)(i), s. 53(1)(f))</span>
             </div>
             <p className="text-[11px] leading-relaxed text-[#6D28D9]">
-              A capital loss is deemed superficial and denied if identical property is acquired within the 61-day window (-30 days to +30 days of disposition) by the taxpayer or an affiliated person (including spouse, TFSA, or RRSP) and held at the end of the period. Denied losses are added back to the ACB of the replacement property under <strong>ITA s. 53(1)(f)</strong>.
+              A capital loss is deemed superficial when you or an affiliated person (including your spouse, a corporation you control, or your registered accounts like TFSA/RRSP) acquires the identical property during the period beginning 30 days before and ending 30 days after the disposition, and owns the property at the end of that period. Denied losses are added to the ACB of the replacement property.
             </p>
           </div>
 
           <div className="bg-white border border-[#E4E4E7] rounded-2xl overflow-hidden shadow-2xs">
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
+              <table className="w-full text-left text-xs border-collapse font-mono">
                 <thead>
-                  <tr className="bg-[#F4F4F5] border-b border-[#E4E4E7] text-[#71717A] uppercase tracking-wider text-[10px] font-mono">
-                    <th className="py-3 px-3 font-semibold">Disposing Tx ID</th>
-                    <th className="py-3 px-3 font-semibold">Security</th>
-                    <th className="py-3 px-3 font-semibold">Sale Date</th>
-                    <th className="py-3 px-3 font-semibold text-right">Raw Capital Loss</th>
-                    <th className="py-3 px-3 font-semibold text-right">Denied Superficial Amount</th>
-                    <th className="py-3 px-3 font-semibold text-right">Allowed Schedule 3 Loss</th>
-                    <th className="py-3 px-3 font-semibold">Replacement Trade Link</th>
-                    <th className="py-3 px-3 font-semibold">CRA Statutory Status</th>
+                  <tr className="bg-[#F4F4F5] border-b border-[#E4E4E7] text-[#71717A] uppercase tracking-wider text-[10px]">
+                    <th className="py-3 px-3 font-semibold">Date</th>
+                    <th className="py-3 px-3 font-semibold">Symbol</th>
+                    <th className="py-3 px-3 font-semibold text-right">Qty Disposed</th>
+                    <th className="py-3 px-3 font-semibold text-right">Potential Loss</th>
+                    <th className="py-3 px-3 font-semibold text-right">Loss Denied (CAD)</th>
+                    <th className="py-3 px-3 font-semibold text-right">Allowable Loss</th>
+                    <th className="py-3 px-3 font-semibold">Replacement Transaction</th>
+                    <th className="py-3 px-3 font-semibold">Tax Treatment</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[#E4E4E7] font-mono">
-                  {superficialLossesList.map((sl, idx) => (
-                    <tr
-                      key={idx}
-                      onClick={() => setSelectedAuditItem({
-                        id: sl.dispositionTransactionId,
-                        rule: 'ITA ss. 40(2)(g)(i) / 53(1)(f) Superficial Loss',
-                        details: sl.explanation
-                      })}
-                      className="hover:bg-[#F9FAFB] cursor-pointer transition-colors"
-                    >
-                      <td className="py-3 px-3 text-[#18181B] font-mono font-medium">{sl.dispositionTransactionId}</td>
+                <tbody className="divide-y divide-[#E4E4E7]">
+                  {superficialLossesList.map((sl) => (
+                    <tr key={sl.id} className="hover:bg-[#F9FAFB] transition-colors">
+                      <td className="py-3 px-3 text-[#18181B]">{sl.dispositionDate}</td>
                       <td className="py-3 px-3 font-bold text-[#18181B]">{sl.symbol}</td>
-                      <td className="py-3 px-3 text-[#71717A]">{sl.dispositionDate}</td>
-                      <td className="py-3 px-3 text-right text-[#DC2626]">-{formatCad(sl.rawCapitalLossCad)}</td>
-                      <td className="py-3 px-3 text-right text-[#7C3AED] font-bold">+{formatCad(sl.deniedLossCad)}</td>
-                      <td className="py-3 px-3 text-right text-[#DC2626] font-semibold">{d(sl.allowedLossCad).gt(0) ? `-${formatCad(sl.allowedLossCad)}` : '$0.00'}</td>
+                      <td className="py-3 px-3 text-right text-[#18181B]">{formatShares(sl.disposedShares)}</td>
+                      <td className="py-3 px-3 text-right text-[#DC2626]">-{formatCad(sl.grossLossCad)}</td>
+                      <td className="py-3 px-3 text-right font-bold text-[#7C3AED]">-{formatCad(sl.deniedLossCad)}</td>
+                      <td className="py-3 px-3 text-right text-[#DC2626]">-{formatCad(sl.allowableLossCad)}</td>
                       <td className="py-3 px-3 text-[#71717A] text-[11px] font-sans">
                         {sl.replacementTransactionId ? (
                           <div className="flex items-center gap-1 text-[#2563EB]">
@@ -523,7 +960,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   {superficialLossesList.length === 0 && (
                     <tr>
                       <td colSpan={8} className="py-12 text-center text-[#71717A] font-sans text-xs">
-                        No superficial losses detected in this portfolio.
+                        No superficial losses detected in this portfolio for tax year {selectedTaxYear}.
                       </td>
                     </tr>
                   )}
@@ -534,7 +971,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         </div>
       )}
 
-      {/* TAB 4: Dividend & Return of Capital (ROC) Summary */}
+      {/* TAB 5: Dividend & Return of Capital (ROC) Summary */}
       {activeReportTab === 'dividends' && (
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs font-mono">
@@ -570,53 +1007,6 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 <strong>Foreign Non-Business Income Tax:</strong> Converted to CAD on transaction date for calculation of foreign tax credits.
               </li>
             </ul>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 5: IBKR P&L Diff Reconciliation */}
-      {activeReportTab === 'ibkr_diff' && (
-        <div className="bg-white border border-[#E4E4E7] rounded-2xl p-6 shadow-2xs space-y-6 text-xs">
-          <div>
-            <h3 className="text-sm font-bold text-[#18181B] flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-[#2563EB]" />
-              <span>Reconciliation: Canadian ACB vs IBKR Activity Statement P&L</span>
-            </h3>
-            <p className="text-xs text-[#71717A] mt-1">
-              Why IBKR 1042-S / Annual Activity P&L numbers differ systematically from your CRA tax return:
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            
-            <div className="p-4 bg-[#F9FAFB] border border-[#E4E4E7] rounded-xl space-y-2">
-              <div className="font-bold text-xs text-[#18181B]">1. Cost Method: Average Cost vs FIFO</div>
-              <p className="text-[11px] text-[#71717A] leading-relaxed">
-                IBKR defaults to First-In, First-Out (FIFO) or LIFO in USD. Canada’s Income Tax Act <strong>s. 47(1)</strong> strictly mandates a single weighted average cost pool across all non-registered accounts.
-              </p>
-            </div>
-
-            <div className="p-4 bg-[#F9FAFB] border border-[#E4E4E7] rounded-xl space-y-2">
-              <div className="font-bold text-xs text-[#18181B]">2. Foreign Exchange Timing (ITA s. 261)</div>
-              <p className="text-[11px] text-[#71717A] leading-relaxed">
-                IBKR calculates gain in USD, then converts at current rate. CRA requires converting acquisition cost at the historical Bank of Canada trade date rate and disposition proceeds at the disposition date rate, capturing embedded FX gain/loss.
-              </p>
-            </div>
-
-            <div className="p-4 bg-[#F9FAFB] border border-[#E4E4E7] rounded-xl space-y-2">
-              <div className="font-bold text-xs text-[#18181B]">3. Superficial Loss Add-Backs (ITA s. 54)</div>
-              <p className="text-[11px] text-[#71717A] leading-relaxed">
-                U.S. Wash Sale rules differ from Canadian Superficial Loss rules (61-day window across all affiliated accounts and registered plans).
-              </p>
-            </div>
-
-            <div className="p-4 bg-[#F9FAFB] border border-[#E4E4E7] rounded-xl space-y-2">
-              <div className="font-bold text-xs text-[#18181B]">4. Option Exercise Integration (ITA s. 49)</div>
-              <p className="text-[11px] text-[#71717A] leading-relaxed">
-                Option premiums on exercise are automatically merged into the cost base or sale proceeds of the underlying shares, rather than reported as standalone closed derivative trades.
-              </p>
-            </div>
-
           </div>
         </div>
       )}

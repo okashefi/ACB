@@ -27,7 +27,7 @@ cp .env.example .env
 |---|---|
 | `GEMINI_API_KEY` | Optional. Powers the in-app AI tax assistant for corporate action explanations. |
 | `APP_URL` | Local server base URL (default: `http://localhost:3000`). |
-| `IBKR_FLEX_TOKEN` | IBKR Flex Web Service token (server-side only). Leave empty for sandbox/file import. |
+| `IBKR_FLEX_TOKEN` | IBKR Flex Web Service token (server-side only). Leave empty if importing via file upload. |
 | `IBKR_FLEX_QUERY_ID` | Activity Flex Query ID from IBKR Client Portal. |
 
 ### 4. Start Development Server
@@ -73,15 +73,14 @@ The application is structured into functional tabs for managing tax calculations
 
 | Area | What the user does there |
 |---|---|
-| **Dashboard** | Year-to-date realized P&L, last sync status, pending review queue, and token health. |
-| **Connections / IBKR** | Configure token/query ID, trigger historical backfill or 3-day sync, or upload XML files. |
+| **Dashboard** | Tax year coverage, year-by-year summary cards, total taxable portfolio ACB, and pending review queue. |
+| **ACB Ledger** | View running ACB per security, total ACB, unit cost, ITA rules applied, and transaction IDs. |
 | **Review Queue** | Classify corporate actions (takeovers, cash boot vs dividend vs ROC, ss. 85.1/86/87). |
-| **Ledger** | View running ACB per security, total ACB, unit cost, ITA rules applied, and transaction IDs. |
-| **Reports** | Export Schedule 3 CSV, gain/loss rollforward, superficial loss audit, and dividend/ROC logs. |
+| **IBKR Sync** | Configure token/query ID, trigger historical backfill or 3-day sync, and review setup guide. |
+| **Tax Reports** | Schedule 3 capital gains CSV, T5008 vs App discrepancy reconciliation, ACB rollforward, and superficial loss audit. |
 | **Accounts** | Map accounts as taxable vs registered (TFSA/RRSP/FHSA) and tag household affiliates. |
 | **Settings** | Select FX rate source (Bank of Canada vs broker), tax inclusion rate, and day-trader warning. |
-| **Manual Entry** | Enter opening ACB, manual trades, corporate action wizard, option exercise, and tax overrides. |
-| **Test Suite** | Run internal tax engine test fixtures (verify all fixtures in Test Suite / e2e:report). |
+| **Help & Guide** | Complete guide on Activity Flex Query setup, CRA average cost rules, and filing instructions. |
 
 ### Engine Core
 - Calculates one shared taxable ACB pool per identical security across all non-registered accounts (ITA s. 47).
