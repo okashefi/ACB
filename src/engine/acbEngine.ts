@@ -15,6 +15,7 @@ import {
 import { calculateCorporateAction } from './corporateActions';
 import { evaluateOptionTaxEffect, OptionPositionState, getOptionSeriesKey } from './optionMatrix';
 import { evaluateSuperficialLoss } from './superficialLoss';
+import { isNonEquityOrCash } from '../parsers/ibkrFlexXmlParser';
 
 interface SecurityBookState {
   securityId: string;
@@ -37,17 +38,88 @@ export function runAcbEngine(
   accounts.forEach((a) => accountMap.set(a.id || a.accountId, a));
 
   const securityMap = new Map<string, SecurityMaster>();
-  securities.forEach((s) => securityMap.set(s.id || s.symbol, s));
+  securities.forEach((s) => {
+    if (s.id) securityMap.set(s.id, s);
+    if (s.symbol) securityMap.set(s.symbol, s);
+  });
+
+  // Canonical Security Map (prefer CON_*, merge SYM_* into CON_*)
+  const canonicalSecIdMap = new Map<string, string>();
+  const canonicalSymbolMap = new Map<string, string>();
+
+  function registerCanonical(conid?: string, isin?: string, symbol?: string, existingId?: string) {
+    const cConid = (conid || '').trim();
+    const cIsin = (isin || '').trim();
+    const cSym = (symbol || '').trim();
+    const cBaseSym = cSym.replace(/\.(TO|V|UN|U|NE)$/i, '');
+
+    if (isNonEquityOrCash(cSym)) return;
+
+    let targetId = '';
+    if (cConid) {
+      targetId = `CON_${cConid}`;
+    } else if (existingId && existingId.startsWith('CON_')) {
+      targetId = existingId;
+    } else if (cIsin && canonicalSecIdMap.has(`ISIN_${cIsin}`)) {
+      targetId = canonicalSecIdMap.get(`ISIN_${cIsin}`)!;
+    } else if (cSym && canonicalSecIdMap.has(`SYM_${cSym}`)) {
+      targetId = canonicalSecIdMap.get(`SYM_${cSym}`)!;
+    } else if (cBaseSym && canonicalSecIdMap.has(`SYM_${cBaseSym}`)) {
+      targetId = canonicalSecIdMap.get(`SYM_${cBaseSym}`)!;
+    } else if (cIsin) {
+      targetId = `ISIN_${cIsin}`;
+    } else if (cSym) {
+      targetId = `SYM_${cSym}`;
+    }
+
+    if (!targetId) return;
+
+    if (cConid && !targetId.startsWith('CON_')) {
+      targetId = `CON_${cConid}`;
+    }
+
+    if (cConid) canonicalSecIdMap.set(`CON_${cConid}`, targetId);
+    if (cIsin) canonicalSecIdMap.set(`ISIN_${cIsin}`, targetId);
+    if (cSym) {
+      canonicalSecIdMap.set(`SYM_${cSym}`, targetId);
+      canonicalSecIdMap.set(cSym, targetId);
+    }
+    if (cBaseSym) {
+      canonicalSecIdMap.set(`SYM_${cBaseSym}`, targetId);
+      canonicalSecIdMap.set(cBaseSym, targetId);
+    }
+    if (existingId) canonicalSecIdMap.set(existingId, targetId);
+
+    if (cSym && (!canonicalSymbolMap.has(targetId) || cSym.length < (canonicalSymbolMap.get(targetId)?.length || 99))) {
+      canonicalSymbolMap.set(targetId, cSym);
+    }
+  }
+
+  securities.forEach((s) => {
+    registerCanonical(s.conid, s.isin, s.symbol, s.id);
+  });
+
+  transactions.forEach((t) => {
+    registerCanonical(undefined, undefined, t.symbol, t.securityId);
+  });
+
+  function resolveId(secId?: string, symbol?: string): string {
+    if (secId && canonicalSecIdMap.has(secId)) return canonicalSecIdMap.get(secId)!;
+    if (symbol && canonicalSecIdMap.has(`SYM_${symbol}`)) return canonicalSecIdMap.get(`SYM_${symbol}`)!;
+    if (symbol && canonicalSecIdMap.has(symbol)) return canonicalSecIdMap.get(symbol)!;
+    if (secId) return secId;
+    if (symbol) return `SYM_${symbol}`;
+    return 'SYM_UNKNOWN';
+  }
+
+  function resolveSymbol(targetId: string, fallbackSym: string): string {
+    return canonicalSymbolMap.get(targetId) || fallbackSym;
+  }
 
   // Filter out cancelled transactions
   const activeTx = transactions.filter((t) => !t.isCancelled);
 
-  // Group by date, respecting intraday order:
-  // 1. Splits / Consolidations (priority 1)
-  // 2. Other Corporate Actions (priority 2)
-  // 3. Acquisitions / Buys / DRIPs (priority 3)
-  // 4. Dispositions / Sells / Exercises (priority 4)
-  // 5. ROC / Cash Distributions (priority 5)
+  // Group by date, respecting intraday order
   const getPriority = (tx: Transaction): number => {
     if (tx.transactionType === 'STOCK_SPLIT' || tx.transactionType === 'STOCK_CONSOLIDATION') return 1;
     if (tx.transactionType.startsWith('MERGER_') || tx.transactionType === 'SPINOFF' || tx.transactionType === 'RIGHTS_ISSUE') return 2;
@@ -101,11 +173,28 @@ export function runAcbEngine(
     return books.get(secId)!;
   };
 
+  const updateBookAverages = (book: SecurityBookState) => {
+    if (book.quantity.isZero() || !book.quantity.isPositive() || book.quantity.isNaN() || !book.quantity.isFinite()) {
+      book.quantity = new Decimal(0);
+      book.totalAcbCad = new Decimal(0);
+      book.acbPerUnitCad = new Decimal(0);
+    } else {
+      if (book.totalAcbCad.isNaN() || !book.totalAcbCad.isFinite() || !book.totalAcbCad.isPositive()) {
+        book.totalAcbCad = new Decimal(0);
+        book.acbPerUnitCad = new Decimal(0);
+      } else {
+        const perUnit = book.totalAcbCad.dividedBy(book.quantity);
+        book.acbPerUnitCad = perUnit.isNaN() || !perUnit.isFinite() ? new Decimal(0) : perUnit;
+      }
+    }
+  };
+
   const ledger: AcbLedgerEntry[] = [];
   const realizedGainsLosses: RealizedGainLoss[] = [];
   const superficialLosses: SuperficialLossEvent[] = [];
   const rollforwardsByYear = new Map<number, Map<string, SecurityRollforward>>();
   const auditTrail: string[] = [];
+  const pendingSuperficialLossByTxId = new Map<string, Decimal>();
 
   let totalDivCad = new Decimal(0);
   let totalRocCad = new Decimal(0);
@@ -154,18 +243,53 @@ export function runAcbEngine(
     const acct = accountMap.get(tx.accountId);
     const isTaxable = !acct || acct.accountType === 'taxable' || acct.accountType === 'spouse_taxable' || acct.accountType === 'affiliate_taxable';
     const txYear = parseInt(tx.date.substring(0, 4), 10);
-    const sec = securityMap.get(tx.securityId);
-    const secName = sec?.name || tx.symbol;
+    const sec = securityMap.get(tx.securityId) || securityMap.get(tx.symbol);
+
+    // Filter CASH and FOREX/Currency Pair trades from equity pool tracking
+    if (isNonEquityOrCash(tx.symbol, sec?.assetClass, tx.securityId)) {
+      if (tx.transactionType === 'DIVIDEND_CASH' || tx.transactionType === 'DIVIDEND_REINVESTED') {
+        const divAmt = d(tx.amountCad);
+        if (!divAmt.isNaN() && divAmt.isFinite()) totalDivCad = totalDivCad.plus(divAmt);
+      }
+      if (tx.transactionType === 'WITHHOLDING_TAX') {
+        const whtAmt = d(tx.amountCad);
+        if (!whtAmt.isNaN() && whtAmt.isFinite()) totalWhtCad = totalWhtCad.plus(whtAmt);
+      }
+      continue;
+    }
+
+    const canonicalId = resolveId(tx.securityId, tx.symbol);
+    const canonicalSym = resolveSymbol(canonicalId, tx.symbol);
+    const secName = sec?.name || canonicalSym;
 
     if (tx.isExcludedFromTax) {
-      auditTrail.push(`[${tx.date}] EXCLUDED FROM TAX: ${tx.symbol} ${tx.transactionType} (${tx.exclusionReason || 'User flagged'})`);
+      auditTrail.push(`[${tx.date}] EXCLUDED FROM TAX: ${canonicalSym} ${tx.transactionType} (${tx.exclusionReason || 'User flagged'})`);
+      continue;
+    }
+
+    // Amount and FX validation: Do not write NaN
+    const amountVal = d(tx.amountCad);
+    const fxVal = d(tx.fxRate || 1);
+    if (
+      tx.amountCad === undefined ||
+      tx.amountCad === null ||
+      tx.amountCad === 'NaN' ||
+      amountVal.isNaN() ||
+      !amountVal.isFinite() ||
+      fxVal.isNaN() ||
+      !fxVal.isFinite() ||
+      fxVal.isZero()
+    ) {
+      tx.status = 'needs_review';
+      blockedSecurities.add(canonicalId);
+      auditTrail.push(`[${tx.date}] Transaction ${tx.id} (${canonicalSym}) has invalid amount/FX. Marked needs_review and skipped.`);
       continue;
     }
 
     if (tx.status === 'needs_review') {
-      blockedSecurities.add(tx.securityId);
+      blockedSecurities.add(canonicalId);
     }
-    if (blockedSecurities.has(tx.securityId)) {
+    if (blockedSecurities.has(canonicalId)) {
       continue;
     }
 
@@ -176,10 +300,10 @@ export function runAcbEngine(
 
     // Track Income / Distributions
     if (tx.transactionType === 'DIVIDEND_CASH' || tx.transactionType === 'DIVIDEND_REINVESTED') {
-      totalDivCad = totalDivCad.plus(d(tx.amountCad));
+      totalDivCad = totalDivCad.plus(amountVal);
     }
     if (tx.transactionType === 'WITHHOLDING_TAX') {
-      totalWhtCad = totalWhtCad.plus(d(tx.amountCad));
+      totalWhtCad = totalWhtCad.plus(amountVal);
     }
 
     // Registered account operations don't alter non-registered taxable ACB pool
@@ -187,7 +311,7 @@ export function runAcbEngine(
       continue;
     }
 
-    const book = getBook(tx.securityId, tx.symbol);
+    const book = getBook(canonicalId, canonicalSym);
 
     // ==========================================
     // 1. CORPORATE ACTIONS (Splits, Mergers, Spins)
@@ -215,19 +339,17 @@ export function runAcbEngine(
       if (oldSharesDisposed.greaterThan(0)) {
         book.quantity = Decimal.max(0, book.quantity.minus(oldSharesDisposed));
         book.totalAcbCad = Decimal.max(0, book.totalAcbCad.minus(oldAcbRemoved));
-        book.acbPerUnitCad = book.quantity.greaterThan(0) ? book.totalAcbCad.dividedBy(book.quantity) : new Decimal(0);
+        updateBookAverages(book);
       }
 
       // Apply new shares addition (if same or different security)
-      const targetSecId = tx.corporateAction.newSecurityId || tx.securityId;
-      const targetBook = getBook(targetSecId, tx.symbol);
+      const targetSecId = tx.corporateAction.newSecurityId ? resolveId(tx.corporateAction.newSecurityId) : canonicalId;
+      const targetBook = getBook(targetSecId, canonicalSym);
 
       if (newSharesQty.greaterThan(0)) {
         targetBook.quantity = targetBook.quantity.plus(newSharesQty);
         targetBook.totalAcbCad = targetBook.totalAcbCad.plus(newSharesTotalAcb);
-        targetBook.acbPerUnitCad = targetBook.quantity.greaterThan(0)
-          ? targetBook.totalAcbCad.dividedBy(targetBook.quantity)
-          : new Decimal(0);
+        updateBookAverages(targetBook);
       }
 
       // Record capital gains / losses if recognized or if event is a real taxable disposition
@@ -247,8 +369,8 @@ export function runAcbEngine(
           id: `RGL_${tx.id}`,
           taxYear: txYear,
           dispositionDate: tx.date,
-          securityId: tx.securityId,
-          symbol: tx.symbol,
+          securityId: canonicalId,
+          symbol: canonicalSym,
           securityName: secName,
           assetClass: sec?.assetClass || 'STK',
           quantityDisposed: toShares(oldSharesDisposed),
@@ -280,8 +402,8 @@ export function runAcbEngine(
       ledger.push({
         id: `LED_${tx.id}`,
         date: tx.date,
-        securityId: tx.securityId,
-        symbol: tx.symbol,
+        securityId: canonicalId,
+        symbol: canonicalSym,
         transactionId: tx.id,
         transactionType: tx.transactionType,
         description: `Corporate Action: ${tx.corporateAction.treatment} (${caResult.statutoryBasis})`,
@@ -298,7 +420,7 @@ export function runAcbEngine(
         notes: caResult.explanation,
       });
 
-      auditTrail.push(`[${tx.date}] ${tx.symbol} Corporate Action ${tx.corporateAction.treatment}: ${caResult.explanation}`);
+      auditTrail.push(`[${tx.date}] ${canonicalSym} Corporate Action ${tx.corporateAction.treatment}: ${caResult.explanation}`);
       continue;
     }
 
@@ -358,8 +480,7 @@ export function runAcbEngine(
       // If option lifecycle creates or disposes underlying shares
       if (effect.isShareTransaction) {
         const underlyingSymbol = optState.underlyingSymbol;
-        const underlyingSec = securities.find(s => s.symbol === underlyingSymbol && s.assetClass === 'STK');
-        const targetBookId = underlyingSec ? underlyingSec.id : tx.securityId + '_UNDERLYING';
+        const targetBookId = resolveId(undefined, underlyingSymbol);
         const targetBook = getBook(targetBookId, underlyingSymbol);
         
         const deltaQty = d(effect.shareDeltaQty);
@@ -370,9 +491,9 @@ export function runAcbEngine(
 
           targetBook.quantity = targetBook.quantity.plus(addedQty);
           targetBook.totalAcbCad = targetBook.totalAcbCad.plus(addedCost);
-          targetBook.acbPerUnitCad = targetBook.quantity.isPositive() ? targetBook.totalAcbCad.dividedBy(targetBook.quantity) : new Decimal(0);
+          updateBookAverages(targetBook);
 
-          recordRollforward(txYear, targetBookId, underlyingSymbol, underlyingSec?.name || underlyingSymbol, (rf) => {
+          recordRollforward(txYear, targetBookId, underlyingSymbol, underlyingSymbol, (rf) => {
             rf.acquisitionsQuantity = toShares(d(rf.acquisitionsQuantity).plus(addedQty));
             rf.acquisitionsCostCad = toMoney(d(rf.acquisitionsCostCad).plus(addedCost));
           });
@@ -386,7 +507,7 @@ export function runAcbEngine(
 
           targetBook.quantity = Decimal.max(0, targetBook.quantity.minus(disposedQty));
           targetBook.totalAcbCad = Decimal.max(0, targetBook.totalAcbCad.minus(acbRemoved));
-          targetBook.acbPerUnitCad = targetBook.quantity.isPositive() ? targetBook.totalAcbCad.dividedBy(targetBook.quantity) : new Decimal(0);
+          updateBookAverages(targetBook);
 
           realizedGainsLosses.push({
             id: `RGL_${tx.id}`,
@@ -394,7 +515,7 @@ export function runAcbEngine(
             dispositionDate: tx.date,
             securityId: targetBookId,
             symbol: underlyingSymbol,
-            securityName: underlyingSec?.name || underlyingSymbol,
+            securityName: underlyingSymbol,
             assetClass: 'STK',
             quantityDisposed: toShares(disposedQty),
             grossProceedsCad: toMoney(grossProceeds),
@@ -420,8 +541,8 @@ export function runAcbEngine(
           id: `RGL_${tx.id}`,
           taxYear: txYear,
           dispositionDate: tx.date,
-          securityId: tx.securityId,
-          symbol: tx.symbol,
+          securityId: canonicalId,
+          symbol: canonicalSym,
           securityName: `Option: ${seriesKey}`,
           assetClass: 'OPT',
           quantityDisposed: toShares(tx.quantity),
@@ -449,8 +570,8 @@ export function runAcbEngine(
       ledger.push({
         id: `LED_${tx.id}`,
         date: tx.date,
-        securityId: tx.securityId,
-        symbol: tx.symbol,
+        securityId: canonicalId,
+        symbol: canonicalSym,
         transactionId: tx.id,
         transactionType: tx.transactionType,
         description: effect.optionExplanation,
@@ -467,7 +588,7 @@ export function runAcbEngine(
         notes: effect.optionExplanation,
       });
 
-      auditTrail.push(`[${tx.date}] Option Event ${tx.transactionType} (${tx.symbol}): ${effect.optionExplanation}`);
+      auditTrail.push(`[${tx.date}] Option Event ${tx.transactionType} (${canonicalSym}): ${effect.optionExplanation}`);
       continue;
     }
 
@@ -485,13 +606,13 @@ export function runAcbEngine(
 
       if (tx.status === 'needs_review' || (!isFromRegistered && !isFromTaxable)) {
         tx.status = 'needs_review';
-        auditTrail.push(`[${tx.date}] TRANSFER_IN ${toShares(d(tx.quantity))} ${tx.symbol}: Source account type unknown. Transaction marked needs_review; pool unchanged.`);
+        auditTrail.push(`[${tx.date}] TRANSFER_IN ${toShares(d(tx.quantity))} ${canonicalSym}: Source account type unknown. Transaction marked needs_review; pool unchanged.`);
         continue;
       }
 
       if (isFromTaxable && !isFromRegistered) {
         // Taxable -> Taxable (same taxpayer): ignore both legs under unified ITA s. 47 pool
-        auditTrail.push(`[${tx.date}] TRANSFER_IN ${toShares(d(tx.quantity))} ${tx.symbol}: Taxable-to-taxable transfer ignored under unified ITA s. 47 pool.`);
+        auditTrail.push(`[${tx.date}] TRANSFER_IN ${toShares(d(tx.quantity))} ${canonicalSym}: Taxable-to-taxable transfer ignored under unified ITA s. 47 pool.`);
         continue;
       }
 
@@ -501,9 +622,9 @@ export function runAcbEngine(
 
       book.quantity = book.quantity.plus(qty);
       book.totalAcbCad = book.totalAcbCad.plus(costCad);
-      book.acbPerUnitCad = book.quantity.isPositive() ? book.totalAcbCad.dividedBy(book.quantity) : new Decimal(0);
+      updateBookAverages(book);
 
-      recordRollforward(txYear, tx.securityId, tx.symbol, secName, (rf) => {
+      recordRollforward(txYear, canonicalId, canonicalSym, secName, (rf) => {
         rf.acquisitionsQuantity = toShares(d(rf.acquisitionsQuantity).plus(qty));
         rf.acquisitionsCostCad = toMoney(d(rf.acquisitionsCostCad).plus(costCad));
       });
@@ -511,8 +632,8 @@ export function runAcbEngine(
       ledger.push({
         id: `LED_${tx.id}`,
         date: tx.date,
-        securityId: tx.securityId,
-        symbol: tx.symbol,
+        securityId: canonicalId,
+        symbol: canonicalSym,
         transactionId: tx.id,
         transactionType: tx.transactionType,
         description: `Transfer In of ${toShares(qty)} units at $${toMoney(costCad)} CAD FMV`,
@@ -527,7 +648,7 @@ export function runAcbEngine(
         statutoryRule: isFromRegistered ? 'In-Kind Registered-to-Taxable Transfer Acquisition at FMV' : 'ITA s. 47(1) Average Cost Pool Recomputation',
       });
 
-      auditTrail.push(`[${tx.date}] TRANSFER_IN ${toShares(qty)} ${tx.symbol}: New Total ACB = $${toMoney(book.totalAcbCad)} CAD ($${toMoney(book.acbPerUnitCad)}/unit)`);
+      auditTrail.push(`[${tx.date}] TRANSFER_IN ${toShares(qty)} ${canonicalSym}: New Total ACB = $${toMoney(book.totalAcbCad)} CAD ($${toMoney(book.acbPerUnitCad)}/unit)`);
       continue;
     }
 
@@ -537,14 +658,18 @@ export function runAcbEngine(
       tx.transactionType === 'OPENING_BALANCE'
     ) {
       const qty = d(tx.quantity);
-      // Acquisition cost includes price x qty in CAD + commissions + expenses
-      const costCad = d(tx.amountCad).plus(d(tx.commissionCad));
+      const pendingSl = pendingSuperficialLossByTxId.get(tx.id) || new Decimal(0);
+      // Acquisition cost includes price x qty in CAD + commissions + expenses + any superficial loss addition
+      let costCad = d(tx.amountCad).plus(d(tx.commissionCad)).plus(pendingSl);
+      if (costCad.isZero() && qty.isPositive() && d(tx.price).isPositive()) {
+        costCad = qty.times(d(tx.price)).times(d(tx.fxRate || 1)).plus(d(tx.commissionCad)).plus(pendingSl);
+      }
 
       book.quantity = book.quantity.plus(qty);
       book.totalAcbCad = book.totalAcbCad.plus(costCad);
-      book.acbPerUnitCad = book.quantity.isPositive() ? book.totalAcbCad.dividedBy(book.quantity) : new Decimal(0);
+      updateBookAverages(book);
 
-      recordRollforward(txYear, tx.securityId, tx.symbol, secName, (rf) => {
+      recordRollforward(txYear, canonicalId, canonicalSym, secName, (rf) => {
         rf.acquisitionsQuantity = toShares(d(rf.acquisitionsQuantity).plus(qty));
         rf.acquisitionsCostCad = toMoney(d(rf.acquisitionsCostCad).plus(costCad));
       });
@@ -552,11 +677,11 @@ export function runAcbEngine(
       ledger.push({
         id: `LED_${tx.id}`,
         date: tx.date,
-        securityId: tx.securityId,
-        symbol: tx.symbol,
+        securityId: canonicalId,
+        symbol: canonicalSym,
         transactionId: tx.id,
         transactionType: tx.transactionType,
-        description: `Acquisition of ${toShares(qty)} units at $${toMoney(costCad)} CAD (incl. $${toMoney(tx.commissionCad)} comm)`,
+        description: `Acquisition of ${toShares(qty)} units at $${toMoney(costCad)} CAD (incl. $${toMoney(tx.commissionCad)} comm${pendingSl.isPositive() ? ` + $${toMoney(pendingSl)} superficial loss addition` : ''})`,
         quantityChange: toShares(qty),
         runningQuantity: toShares(book.quantity),
         costChangeCad: toMoney(costCad),
@@ -565,11 +690,11 @@ export function runAcbEngine(
         originalCurrency: tx.currency,
         fxRateUsed: toRate(d(tx.fxRate || 1)),
         fxRateSource: tx.fxRateSource,
-        statutoryRule: 'ITA s. 47(1) Average Cost Pool Recomputation',
+        statutoryRule: pendingSl.isPositive() ? 'ITA s. 47(1) & s. 53(1)(f) Superficial Loss Cost Addition' : 'ITA s. 47(1) Average Cost Pool Recomputation',
       });
 
       auditTrail.push(
-        `[${tx.date}] BUY ${toShares(qty)} ${tx.symbol}: New Total ACB = $${toMoney(book.totalAcbCad)} CAD ($${toMoney(book.acbPerUnitCad)}/unit)`
+        `[${tx.date}] BUY ${toShares(qty)} ${canonicalSym}: New Total ACB = $${toMoney(book.totalAcbCad)} CAD ($${toMoney(book.acbPerUnitCad)}/unit)`
       );
       continue;
     }
@@ -588,13 +713,13 @@ export function runAcbEngine(
 
       if (tx.status === 'needs_review' || (!isToRegistered && !isToTaxable)) {
         tx.status = 'needs_review';
-        auditTrail.push(`[${tx.date}] TRANSFER_OUT ${toShares(d(tx.quantity))} ${tx.symbol}: Destination account type unknown. Transaction marked needs_review; no deemed disposition posted.`);
+        auditTrail.push(`[${tx.date}] TRANSFER_OUT ${toShares(d(tx.quantity))} ${canonicalSym}: Destination account type unknown. Transaction marked needs_review; no deemed disposition posted.`);
         continue;
       }
 
       if (isToTaxable && !isToRegistered) {
         // Taxable -> Taxable (same taxpayer): ignore both legs under unified ITA s. 47 pool
-        auditTrail.push(`[${tx.date}] TRANSFER_OUT ${toShares(d(tx.quantity))} ${tx.symbol}: Taxable-to-taxable transfer ignored under unified ITA s. 47 pool.`);
+        auditTrail.push(`[${tx.date}] TRANSFER_OUT ${toShares(d(tx.quantity))} ${canonicalSym}: Taxable-to-taxable transfer ignored under unified ITA s. 47 pool.`);
         continue;
       }
 
@@ -610,7 +735,7 @@ export function runAcbEngine(
       // Update pool
       book.quantity = Decimal.max(0, book.quantity.minus(qtyDisposed));
       book.totalAcbCad = Decimal.max(0, book.totalAcbCad.minus(acbRemoved));
-      book.acbPerUnitCad = book.quantity.isPositive() ? book.totalAcbCad.dividedBy(book.quantity) : new Decimal(0);
+      updateBookAverages(book);
 
       const isLoss = rawGainLoss.isNegative();
       const recognizedGainLoss = isLoss ? d(0) : rawGainLoss;
@@ -619,8 +744,8 @@ export function runAcbEngine(
         const deniedAmt = rawGainLoss.abs();
         superficialLosses.push({
           dispositionTransactionId: tx.id,
-          securityId: tx.securityId,
-          symbol: tx.symbol,
+          securityId: canonicalId,
+          symbol: canonicalSym,
           dispositionDate: tx.date,
           rawCapitalLossCad: toMoney(deniedAmt),
           deniedLossCad: toMoney(deniedAmt),
@@ -638,8 +763,8 @@ export function runAcbEngine(
         taxYear: txYear,
         dispositionDate: tx.date,
         settlementDate: tx.settlementDate,
-        securityId: tx.securityId,
-        symbol: tx.symbol,
+        securityId: canonicalId,
+        symbol: canonicalSym,
         securityName: secName,
         assetClass: sec?.assetClass || 'STK',
         quantityDisposed: toShares(qtyDisposed),
@@ -660,7 +785,7 @@ export function runAcbEngine(
           : `Transfer to registered account at FMV proceeds $${toMoney(grossProceeds)} CAD vs ACB $${toMoney(acbRemoved)} CAD. Capital gain recognized.`,
       });
 
-      recordRollforward(txYear, tx.securityId, tx.symbol, secName, (rf) => {
+      recordRollforward(txYear, canonicalId, canonicalSym, secName, (rf) => {
         rf.dispositionsQuantity = toShares(d(rf.dispositionsQuantity).plus(qtyDisposed));
         rf.dispositionsAcbRemovedCad = toMoney(d(rf.dispositionsAcbRemovedCad).plus(acbRemoved));
       });
@@ -668,8 +793,8 @@ export function runAcbEngine(
       ledger.push({
         id: `LED_${tx.id}`,
         date: tx.date,
-        securityId: tx.securityId,
-        symbol: tx.symbol,
+        securityId: canonicalId,
+        symbol: canonicalSym,
         transactionId: tx.id,
         transactionType: tx.transactionType,
         description: `Transfer Out (In-Kind Deemed Disposition) of ${toShares(qtyDisposed)} units to ${dstAcctType?.toUpperCase() || 'REGISTERED'}. Proceeds: $${toMoney(grossProceeds)} CAD`,
@@ -686,7 +811,7 @@ export function runAcbEngine(
       });
 
       auditTrail.push(
-        `[${tx.date}] TRANSFER_OUT ${toShares(qtyDisposed)} ${tx.symbol} to ${dstAcctType || 'REGISTERED'}: Realized Gain/Loss = $${toMoney(recognizedGainLoss)} CAD`
+        `[${tx.date}] TRANSFER_OUT ${toShares(qtyDisposed)} ${canonicalSym} to ${dstAcctType || 'REGISTERED'}: Realized Gain/Loss = $${toMoney(recognizedGainLoss)} CAD`
       );
       continue;
     }
@@ -703,10 +828,10 @@ export function runAcbEngine(
       const netProceeds = grossProceeds.minus(outlays);
       const rawGainLoss = netProceeds.minus(acbRemoved);
 
-      // Update pool: disposition removes qty x acb_per_unit; per-unit ACB is unchanged
+      // Update pool: disposition removes qty x acb_per_unit
       book.quantity = Decimal.max(0, book.quantity.minus(qtyDisposed));
       book.totalAcbCad = Decimal.max(0, book.totalAcbCad.minus(acbRemoved));
-      book.acbPerUnitCad = book.quantity.isPositive() ? book.totalAcbCad.dividedBy(book.quantity) : new Decimal(0);
+      updateBookAverages(book);
 
       // Check Superficial Loss
       const isLoss = rawGainLoss.isNegative();
@@ -730,8 +855,8 @@ export function runAcbEngine(
 
         superficialLosses.push({
           dispositionTransactionId: tx.id,
-          securityId: tx.securityId,
-          symbol: tx.symbol,
+          securityId: canonicalId,
+          symbol: canonicalSym,
           dispositionDate: tx.date,
           rawCapitalLossCad: toMoney(rawGainLoss.abs()),
           deniedLossCad: toMoney(deniedAmt),
@@ -746,16 +871,22 @@ export function runAcbEngine(
 
         // Add denied loss back to replacement ACB if in taxable account
         if (!slCheck.isPermanentlyDeniedInRegistered && d(slCheck.deniedLossCad).isPositive()) {
-          book.totalAcbCad = book.totalAcbCad.plus(d(slCheck.deniedLossCad));
-          book.acbPerUnitCad = book.quantity.isPositive() ? book.totalAcbCad.dividedBy(book.quantity) : new Decimal(0);
+          const deniedLoss = d(slCheck.deniedLossCad);
+          if (slCheck.replacementTransactionId && slCheck.replacementDate && slCheck.replacementDate >= tx.date) {
+            const currentPending = pendingSuperficialLossByTxId.get(slCheck.replacementTransactionId) || new Decimal(0);
+            pendingSuperficialLossByTxId.set(slCheck.replacementTransactionId, currentPending.plus(deniedLoss));
+          } else {
+            book.totalAcbCad = book.totalAcbCad.plus(deniedLoss);
+            updateBookAverages(book);
+          }
 
-          recordRollforward(txYear, tx.securityId, tx.symbol, secName, (rf) => {
-            rf.superficialLossAdditionsCad = toMoney(d(rf.superficialLossAdditionsCad).plus(d(slCheck.deniedLossCad)));
+          recordRollforward(txYear, canonicalId, canonicalSym, secName, (rf) => {
+            rf.superficialLossAdditionsCad = toMoney(d(rf.superficialLossAdditionsCad).plus(deniedLoss));
           });
         }
       }
 
-      recordRollforward(txYear, tx.securityId, tx.symbol, secName, (rf) => {
+      recordRollforward(txYear, canonicalId, canonicalSym, secName, (rf) => {
         rf.dispositionsQuantity = toShares(d(rf.dispositionsQuantity).plus(qtyDisposed));
         rf.dispositionsAcbRemovedCad = toMoney(d(rf.dispositionsAcbRemovedCad).plus(acbRemoved));
         rf.realizedGainLossTotalCad = toMoney(d(rf.realizedGainLossTotalCad).plus(finalRecognizedGainLoss));
@@ -766,8 +897,8 @@ export function runAcbEngine(
         taxYear: txYear,
         dispositionDate: tx.date,
         settlementDate: tx.settlementDate,
-        securityId: tx.securityId,
-        symbol: tx.symbol,
+        securityId: canonicalId,
+        symbol: canonicalSym,
         securityName: secName,
         assetClass: sec?.assetClass || 'STK',
         quantityDisposed: toShares(qtyDisposed),
@@ -794,8 +925,8 @@ export function runAcbEngine(
       ledger.push({
         id: `LED_${tx.id}`,
         date: tx.date,
-        securityId: tx.securityId,
-        symbol: tx.symbol,
+        securityId: canonicalId,
+        symbol: canonicalSym,
         transactionId: tx.id,
         transactionType: tx.transactionType,
         description: `Disposition of ${toShares(qtyDisposed)} units at proceeds $${toMoney(netProceeds)} CAD vs ACB $${toMoney(acbRemoved)} CAD`,
@@ -814,7 +945,7 @@ export function runAcbEngine(
       });
 
       auditTrail.push(
-        `[${tx.date}] SELL ${toShares(qtyDisposed)} ${tx.symbol}: Realized Gain/Loss = $${toMoney(finalRecognizedGainLoss)} CAD`
+        `[${tx.date}] SELL ${toShares(qtyDisposed)} ${canonicalSym}: Realized Gain/Loss = $${toMoney(finalRecognizedGainLoss)} CAD`
       );
       continue;
     }
@@ -838,8 +969,8 @@ export function runAcbEngine(
           id: `RGL_ROC_${tx.id}`,
           taxYear: txYear,
           dispositionDate: tx.date,
-          securityId: tx.securityId,
-          symbol: tx.symbol,
+          securityId: canonicalId,
+          symbol: canonicalSym,
           securityName: secName,
           assetClass: sec?.assetClass || 'STK',
           quantityDisposed: '0',
@@ -860,17 +991,17 @@ export function runAcbEngine(
       }
 
       book.totalAcbCad = newTotalAcb;
-      book.acbPerUnitCad = book.quantity.isPositive() ? book.totalAcbCad.dividedBy(book.quantity) : new Decimal(0);
+      updateBookAverages(book);
 
-      recordRollforward(txYear, tx.securityId, tx.symbol, secName, (rf) => {
+      recordRollforward(txYear, canonicalId, canonicalSym, secName, (rf) => {
         rf.rocAdjustmentsCad = toMoney(d(rf.rocAdjustmentsCad).plus(rocAmount));
       });
 
       ledger.push({
         id: `LED_${tx.id}`,
         date: tx.date,
-        securityId: tx.securityId,
-        symbol: tx.symbol,
+        securityId: canonicalId,
+        symbol: canonicalSym,
         transactionId: tx.id,
         transactionType: tx.transactionType,
         description: `Return of Capital distribution of $${toMoney(rocAmount)} CAD. ${excessGain.isPositive() ? `Excess $${toMoney(excessGain)} deemed capital gain.` : ''}`,
@@ -886,7 +1017,7 @@ export function runAcbEngine(
         statutoryRule: 'ITA s. 53(2)(a) & s. 40(3) ROC Reduction',
       });
 
-      auditTrail.push(`[${tx.date}] ROC ${tx.symbol}: -$${toMoney(rocAmount)} CAD (New ACB = $${toMoney(book.totalAcbCad)})`);
+      auditTrail.push(`[${tx.date}] ROC ${canonicalSym}: -$${toMoney(rocAmount)} CAD (New ACB = $${toMoney(book.totalAcbCad)})`);
     }
   }
 
@@ -904,23 +1035,41 @@ export function runAcbEngine(
 
   const securityBalances = new Map<string, { quantity: string; totalAcbCad: string; acbPerUnitCad: string; symbol: string; name: string }>();
   books.forEach((book, secId) => {
+    if (isNonEquityOrCash(book.symbol, undefined, secId)) return;
+    const isZero = book.quantity.isZero() || !book.quantity.isPositive();
     securityBalances.set(secId, {
-      quantity: toShares(book.quantity),
-      totalAcbCad: toMoney(book.totalAcbCad),
-      acbPerUnitCad: toMoney(book.acbPerUnitCad),
+      quantity: isZero ? '0' : toShares(book.quantity),
+      totalAcbCad: isZero ? '0.00' : toMoney(book.totalAcbCad),
+      acbPerUnitCad: isZero ? '0.00' : toMoney(book.acbPerUnitCad),
       symbol: book.symbol,
       name: securityMap.get(secId)?.name || book.symbol,
     });
+  });
+
+  canonicalSecIdMap.forEach((targetId, sourceKey) => {
+    const book = books.get(targetId);
+    if (book) {
+      const isZero = book.quantity.isZero() || !book.quantity.isPositive();
+      securityBalances.set(sourceKey, {
+        quantity: isZero ? '0' : toShares(book.quantity),
+        totalAcbCad: isZero ? '0.00' : toMoney(book.totalAcbCad),
+        acbPerUnitCad: isZero ? '0.00' : toMoney(book.acbPerUnitCad),
+        symbol: book.symbol,
+        name: securityMap.get(sourceKey)?.name || securityMap.get(targetId)?.name || book.symbol,
+      });
+    }
   });
 
   let totalGain = new Decimal(0);
   let totalLoss = new Decimal(0);
   realizedGainsLosses.forEach((rgl) => {
     const amount = d(rgl.recognizedGainLossCad);
-    if (amount.isPositive()) {
-      totalGain = totalGain.plus(amount);
-    } else if (amount.isNegative()) {
-      totalLoss = totalLoss.plus(amount.abs());
+    if (!amount.isNaN() && amount.isFinite()) {
+      if (amount.isPositive()) {
+        totalGain = totalGain.plus(amount);
+      } else if (amount.isNegative()) {
+        totalLoss = totalLoss.plus(amount.abs());
+      }
     }
   });
 
@@ -948,33 +1097,64 @@ export function reconcilePositions(
   openPositions: OpenPosition[]
 ): ReconciliationBreak[] {
   const breaks: ReconciliationBreak[] = [];
-  const openPosMap = new Map<string, Decimal>();
+  const openPosMap = new Map<string, { quantity: Decimal; conid?: string }>();
 
   openPositions.forEach((pos) => {
-    const symbol = pos.symbol;
-    if (!symbol) return;
+    const symbol = pos.symbol?.trim();
+    if (!symbol || isNonEquityOrCash(symbol)) return;
     const qty = d(pos.quantity || '0');
-    const existing = openPosMap.get(symbol) || d(0);
-    openPosMap.set(symbol, existing.plus(qty));
+    if (!qty.isNaN() && qty.isFinite()) {
+      const existing = openPosMap.get(symbol);
+      if (existing) {
+        existing.quantity = existing.quantity.plus(qty);
+      } else {
+        openPosMap.set(symbol, { quantity: qty, conid: pos.conid });
+      }
+    }
   });
 
+  const calcPosMap = new Map<string, { quantity: Decimal; totalAcb: Decimal; secId: string }>();
   securityBalances.forEach((bal, secId) => {
+    const sym = bal.symbol?.trim();
+    if (!sym || isNonEquityOrCash(sym)) return;
     const calcQty = d(bal.quantity);
-    if (calcQty.isPositive()) {
-      const brokerReported = openPosMap.get(bal.symbol) || d(0);
-      const diff = calcQty.minus(brokerReported).abs();
-      if (diff.greaterThan(0.0001)) {
-        breaks.push({
-          securityId: secId,
-          symbol: bal.symbol,
-          calculatedQuantity: bal.quantity,
-          brokerReportedQuantity: brokerReported.toString(),
-          quantityDiscrepancy: calcQty.minus(brokerReported).toString(),
-          calculatedAcbCad: bal.totalAcbCad,
-          status: 'QUANTITY_BREAK',
-          explanation: `Calculated quantity (${bal.quantity}) differs from IBKR Open Position (${brokerReported.toString()})`,
-        });
+    if (calcQty.isPositive() && !calcQty.isNaN() && calcQty.isFinite()) {
+      if (!calcPosMap.has(sym)) {
+        calcPosMap.set(sym, { quantity: calcQty, totalAcb: d(bal.totalAcbCad), secId });
       }
+    }
+  });
+
+  calcPosMap.forEach((calc, symbol) => {
+    const brokerObj = openPosMap.get(symbol);
+    const brokerReported = brokerObj ? brokerObj.quantity : d(0);
+    const diff = calc.quantity.minus(brokerReported).abs();
+    if (diff.greaterThan(0.0001)) {
+      breaks.push({
+        securityId: calc.secId,
+        symbol,
+        calculatedQuantity: toShares(calc.quantity),
+        brokerReportedQuantity: toShares(brokerReported),
+        quantityDiscrepancy: toShares(calc.quantity.minus(brokerReported)),
+        calculatedAcbCad: toMoney(calc.totalAcb),
+        status: 'QUANTITY_BREAK',
+        explanation: `Calculated quantity (${toShares(calc.quantity)}) differs from IBKR Open Position (${toShares(brokerReported)})`,
+      });
+    }
+  });
+
+  openPosMap.forEach((brokerObj, symbol) => {
+    if (brokerObj.quantity.greaterThan(0.0001) && !calcPosMap.has(symbol)) {
+      breaks.push({
+        securityId: brokerObj.conid ? `CON_${brokerObj.conid}` : `SYM_${symbol}`,
+        symbol,
+        calculatedQuantity: '0',
+        brokerReportedQuantity: toShares(brokerObj.quantity),
+        quantityDiscrepancy: toShares(brokerObj.quantity.negated()),
+        calculatedAcbCad: '0.00',
+        status: 'QUANTITY_BREAK',
+        explanation: `IBKR reported open position of ${toShares(brokerObj.quantity)} units, but calculated taxable pool is 0`,
+      });
     }
   });
 

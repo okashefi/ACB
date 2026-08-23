@@ -85,7 +85,8 @@ export function convertToCad(
   date: string,
   explicitRate?: number
 ): { amountCad: string; fxRate: number; fxSource: 'BANK_OF_CANADA' | 'IBKR_ACTUAL' | 'MANUAL_OVERRIDE' } {
-  if (currency.toUpperCase() === 'CAD') {
+  const cleanCurr = (currency || 'CAD').toUpperCase();
+  if (cleanCurr === 'CAD') {
     return {
       amountCad: toMoney(amount),
       fxRate: 1.0,
@@ -93,7 +94,7 @@ export function convertToCad(
     };
   }
 
-  if (explicitRate && explicitRate > 0) {
+  if (explicitRate !== undefined && !isNaN(explicitRate) && isFinite(explicitRate) && explicitRate > 0) {
     const rate = explicitRate;
     const amountCad = toMoney(d(amount).times(rate));
     return {
@@ -103,7 +104,7 @@ export function convertToCad(
     };
   }
 
-  const rate = getBankOfCanadaRate(date, currency);
+  const rate = getBankOfCanadaRate(date || '2026-08-22', cleanCurr);
   const amountCad = toMoney(d(amount).times(rate));
   return {
     amountCad,

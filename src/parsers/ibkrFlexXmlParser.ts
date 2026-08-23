@@ -56,10 +56,34 @@ function getAttr(node: any, ...keys: string[]): string {
   return '';
 }
 
+export function isNonEquityOrCash(symbol?: string, assetCategory?: string, secId?: string): boolean {
+  if (!symbol && !secId && !assetCategory) return true;
+  const sym = (symbol || '').trim().toUpperCase();
+  const cat = (assetCategory || '').trim().toUpperCase();
+  const id = (secId || '').trim().toUpperCase();
+
+  if (cat === 'CASH' || cat === 'FX' || cat === 'FOREX' || cat === 'CURRENCY' || cat === 'CASH_REPORT') return true;
+  if (sym === 'CASH' || sym.startsWith('CASH.') || sym.startsWith('CASH_')) return true;
+  if (id === 'SYM_CASH' || id.startsWith('SYM_CASH.') || id === 'CON_CASH') return true;
+
+  // Currency pairs like USD.CAD, CAD.USD, EUR.USD
+  if (/^[A-Z]{3}\.[A-Z]{3}$/.test(sym)) return true;
+  if (/^SYM_[A-Z]{3}\.[A-Z]{3}$/.test(id)) return true;
+
+  // Standalone currencies when in cash context
+  const CURRENCIES = ['USD', 'CAD', 'EUR', 'GBP', 'CHF', 'JPY', 'AUD', 'NZD', 'HKD', 'SGD', 'SEK', 'NOK', 'DKK'];
+  if (CURRENCIES.includes(sym) && (cat === 'CASH' || cat === 'FX' || cat === 'FOREX' || cat === '')) {
+    return true;
+  }
+
+  return false;
+}
+
 function getNum(node: any, ...keys: string[]): number {
   const str = getAttr(node, ...keys);
   if (!str) return 0;
-  const val = parseFloat(str);
+  const cleaned = str.replace(/[$, ]/g, '');
+  const val = parseFloat(cleaned);
   return isNaN(val) ? 0 : val;
 }
 
@@ -123,6 +147,101 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
   let hasTransfersSection = false;
   let hasLotBreakout = false;
   let hasDateParseError = false;
+
+  // Prescan for canonical security mapping (prefer CON_*, merge SYM_* into CON_*)
+  const conidToCanonical = new Map<string, string>();
+  const isinToCanonical = new Map<string, string>();
+  const symbolToCanonical = new Map<string, string>();
+  const canonicalToPrimarySymbol = new Map<string, string>();
+
+  function registerSecurityMapping(conid?: string, isin?: string, symbol?: string) {
+    const cleanConid = (conid || '').trim();
+    const cleanIsin = (isin || '').trim();
+    const cleanSym = (symbol || '').trim();
+    const cleanBaseSym = cleanSym.replace(/\.(TO|V|UN|U|NE)$/i, '');
+
+    if (isNonEquityOrCash(cleanSym)) return;
+
+    let targetId = '';
+    if (cleanConid) {
+      targetId = `CON_${cleanConid}`;
+    } else if (cleanIsin && isinToCanonical.has(cleanIsin)) {
+      targetId = isinToCanonical.get(cleanIsin)!;
+    } else if (cleanSym && symbolToCanonical.has(cleanSym)) {
+      targetId = symbolToCanonical.get(cleanSym)!;
+    } else if (cleanBaseSym && symbolToCanonical.has(cleanBaseSym)) {
+      targetId = symbolToCanonical.get(cleanBaseSym)!;
+    } else if (cleanIsin) {
+      targetId = `ISIN_${cleanIsin}`;
+    } else if (cleanSym) {
+      targetId = `SYM_${cleanSym}`;
+    }
+
+    if (!targetId) return;
+
+    if (cleanConid && !targetId.startsWith('CON_')) {
+      targetId = `CON_${cleanConid}`;
+    }
+
+    if (cleanConid) conidToCanonical.set(cleanConid, targetId);
+    if (cleanIsin) isinToCanonical.set(cleanIsin, targetId);
+    if (cleanSym) symbolToCanonical.set(cleanSym, targetId);
+    if (cleanBaseSym) symbolToCanonical.set(cleanBaseSym, targetId);
+    if (cleanSym && (!canonicalToPrimarySymbol.has(targetId) || cleanSym.length < (canonicalToPrimarySymbol.get(targetId)?.length || 99))) {
+      canonicalToPrimarySymbol.set(targetId, cleanSym);
+    }
+  }
+
+  function resolveCanonicalId(conid?: string, isin?: string, symbol?: string): string {
+    const cConid = (conid || '').trim();
+    const cIsin = (isin || '').trim();
+    const cSym = (symbol || '').trim();
+    const cBaseSym = cSym.replace(/\.(TO|V|UN|U|NE)$/i, '');
+
+    if (cConid && conidToCanonical.has(cConid)) return conidToCanonical.get(cConid)!;
+    if (cConid) return `CON_${cConid}`;
+    if (cIsin && isinToCanonical.has(cIsin)) return isinToCanonical.get(cIsin)!;
+    if (cSym && symbolToCanonical.has(cSym)) return symbolToCanonical.get(cSym)!;
+    if (cBaseSym && symbolToCanonical.has(cBaseSym)) return symbolToCanonical.get(cBaseSym)!;
+    if (cIsin) return `ISIN_${cIsin}`;
+    if (cSym) return `SYM_${cSym}`;
+    return 'SYM_UNKNOWN';
+  }
+
+  // First pass: register mappings from all sections across all statements
+  for (const stmt of flexStatements) {
+    if (!stmt || typeof stmt !== 'object') continue;
+
+    const secNodes = toArray(stmt.SecuritiesInfo?.SecurityInfo || stmt.FinancialInstrumentInformation?.FinancialInstrumentInfo || stmt.SecurityInfo || stmt.FinancialInstrumentInfo || (stmt.SecuritiesInfo && typeof stmt.SecuritiesInfo === 'object' ? stmt.SecuritiesInfo : []));
+    for (const s of secNodes) {
+      registerSecurityMapping(getAttr(s, 'conid', 'conId'), getAttr(s, 'isin', 'ISIN'), getAttr(s, 'symbol', 'ticker'));
+    }
+
+    const tradeNodes = toArray(stmt.Trades?.Trade || stmt.Trades?.Execution || stmt.Trade || stmt.Execution || (stmt.Trades && typeof stmt.Trades === 'object' ? stmt.Trades : []));
+    for (const t of tradeNodes) {
+      registerSecurityMapping(getAttr(t, 'conid', 'conId'), getAttr(t, 'isin', 'ISIN'), getAttr(t, 'symbol', 'ticker'));
+    }
+
+    const posNodes = toArray(stmt.OpenPositions?.OpenPosition || stmt.OpenPosition || (stmt.OpenPositions && typeof stmt.OpenPositions === 'object' ? stmt.OpenPositions : []));
+    for (const p of posNodes) {
+      registerSecurityMapping(getAttr(p, 'conid', 'conId'), getAttr(p, 'isin', 'ISIN'), getAttr(p, 'symbol', 'ticker'));
+    }
+
+    const caNodes = toArray(stmt.CorporateActions?.CorporateAction || stmt.CorporateAction || (stmt.CorporateActions && typeof stmt.CorporateActions === 'object' ? stmt.CorporateActions : []));
+    for (const ca of caNodes) {
+      registerSecurityMapping(getAttr(ca, 'conid', 'conId'), getAttr(ca, 'isin', 'ISIN'), getAttr(ca, 'symbol', 'ticker'));
+    }
+
+    const optNodes = toArray(stmt.OptionEAE?.OptionEAE || stmt.OptionExercises?.OptionExercise || stmt.OptionExercisesAndAssignments?.OptionExerciseAndAssignment || stmt.OptionExercisesAssignmentsAndExpirations?.OptionExercisesAssignmentsAndExpiration || stmt.OptionExercise || (stmt.OptionEAE && typeof stmt.OptionEAE === 'object' ? stmt.OptionEAE : []));
+    for (const o of optNodes) {
+      registerSecurityMapping(getAttr(o, 'conid', 'conId'), getAttr(o, 'isin', 'ISIN'), getAttr(o, 'symbol', 'ticker'));
+    }
+
+    const xferNodes = toArray(stmt.Transfers?.Transfer || stmt.Transfer || (stmt.Transfers && typeof stmt.Transfers === 'object' ? stmt.Transfers : []));
+    for (const x of xferNodes) {
+      registerSecurityMapping(getAttr(x, 'conid', 'conId'), getAttr(x, 'isin', 'ISIN'), getAttr(x, 'symbol', 'ticker'));
+    }
+  }
 
   for (const stmt of flexStatements) {
     if (!stmt || typeof stmt !== 'object') continue;
@@ -287,9 +406,12 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
       const conid = getAttr(s, 'conid', 'conId');
       const symbol = getAttr(s, 'symbol', 'ticker');
       const assetClass = (getAttr(s, 'assetCategory', 'assetClass') || 'STK').toUpperCase();
+      if (isNonEquityOrCash(symbol, assetClass)) continue;
+
       const isin = getAttr(s, 'isin', 'ISIN');
       const cusip = getAttr(s, 'cusip', 'CUSIP');
-      const secId = conid ? `CON_${conid}` : (isin ? `ISIN_${isin}` : `SYM_${symbol}`);
+      const secId = resolveCanonicalId(conid, isin, symbol);
+      const canonicalSymbol = canonicalToPrimarySymbol.get(secId) || symbol;
 
       let optionDetails;
       if (assetClass === 'OPT') {
@@ -307,8 +429,8 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
 
       securitiesMap.set(secId, {
         id: secId,
-        symbol,
-        name: getAttr(s, 'description', 'desc', 'name') || symbol,
+        symbol: canonicalSymbol,
+        name: getAttr(s, 'description', 'desc', 'name') || canonicalSymbol,
         assetClass: assetClass === 'OPT' ? 'OPT' : (assetClass === 'CASH' ? 'CASH' : 'STK'),
         isin,
         cusip,
@@ -336,8 +458,15 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
 
     for (const t of tradesList) {
       const symbol = getAttr(t, 'symbol', 'ticker');
+      const assetCat = (getAttr(t, 'assetCategory', 'assetClass') || 'STK').toUpperCase();
+      if (isNonEquityOrCash(symbol, assetCat)) {
+        continue;
+      }
+
       const conid = getAttr(t, 'conid', 'conId');
-      const secId = conid ? `CON_${conid}` : `SYM_${symbol}`;
+      const isin = getAttr(t, 'isin', 'ISIN');
+      const secId = resolveCanonicalId(conid, isin, symbol);
+      const canonicalSymbol = canonicalToPrimarySymbol.get(secId) || symbol;
       const rawDate = getAttr(t, 'tradeDate', 'date', 'dateTime');
       const { date, parseError } = parseIbkrDate(rawDate);
       if (parseError) hasDateParseError = true;
@@ -347,7 +476,6 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
       const currency = getAttr(t, 'currency', 'cur') || 'USD';
       const comm = Math.abs(getNum(t, 'ibCommission', 'commission', 'taxes'));
       const buySell = (getAttr(t, 'buySell', 'side') || (getNum(t, 'quantity') > 0 ? 'BUY' : 'SELL')).toUpperCase();
-      const assetCat = (getAttr(t, 'assetCategory', 'assetClass') || 'STK').toUpperCase();
       const code = getAttr(t, 'code', 'notes', 'openCloseIndicator');
       const isCancelled = code.includes('Ca') || getAttr(t, 'transactionType', 'type') === 'CANCEL';
 
@@ -381,8 +509,8 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
       if (!securitiesMap.has(secId)) {
         securitiesMap.set(secId, {
           id: secId,
-          symbol,
-          name: getAttr(t, 'description', 'desc') || symbol,
+          symbol: canonicalSymbol,
+          name: getAttr(t, 'description', 'desc') || canonicalSymbol,
           assetClass: assetCat === 'OPT' ? 'OPT' : 'STK',
           conid,
           currency,
@@ -396,7 +524,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
         id: `IBKR_TR_${tradeId}`,
         accountId: getAttr(t, 'accountId', 'account') || 'U_DEFAULT',
         securityId: secId,
-        symbol,
+        symbol: canonicalSymbol,
         date,
         settlementDate: settlementDate || undefined,
         transactionType: txType,
@@ -431,8 +559,12 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
 
     for (const ca of caList) {
       const symbol = getAttr(ca, 'symbol', 'ticker');
+      if (isNonEquityOrCash(symbol)) continue;
+
       const conid = getAttr(ca, 'conid', 'conId');
-      const secId = conid ? `CON_${conid}` : `SYM_${symbol}`;
+      const isin = getAttr(ca, 'isin', 'ISIN');
+      const secId = resolveCanonicalId(conid, isin, symbol);
+      const canonicalSymbol = canonicalToPrimarySymbol.get(secId) || symbol;
       const rawDate = getAttr(ca, 'reportDate', 'date', 'dateTime');
       const { date } = parseIbkrDate(rawDate);
       const desc = getAttr(ca, 'description', 'type') || 'Corporate Action';
@@ -469,7 +601,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
         id: `IBKR_CA_${caId}`,
         accountId: getAttr(ca, 'accountId', 'account') || 'U_DEFAULT',
         securityId: secId,
-        symbol,
+        symbol: canonicalSymbol,
         date,
         transactionType: suggestedTreatment === 'CONTINUITY_SPLIT' ? 'STOCK_SPLIT' : 'MERGER_MIXED',
         quantity: Math.abs(qty).toString(),
@@ -508,7 +640,11 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
       const amount = Math.abs(getNum(c, 'amount', 'grossAmount'));
       const currency = getAttr(c, 'currency') || 'USD';
       const symbol = getAttr(c, 'symbol', 'ticker') || 'CASH';
-      const secId = `SYM_${symbol}`;
+      const conid = getAttr(c, 'conid', 'conId');
+      const isin = getAttr(c, 'isin', 'ISIN');
+      const isCashSym = isNonEquityOrCash(symbol);
+      const secId = isCashSym ? 'SYM_CASH' : resolveCanonicalId(conid, isin, symbol);
+      const canonicalSymbol = isCashSym ? 'CASH' : (canonicalToPrimarySymbol.get(secId) || symbol);
 
       const cId =
         getAttr(c, 'transactionID', 'cId') ||
@@ -533,7 +669,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
         id: `IBKR_CASH_${cId}`,
         accountId: getAttr(c, 'accountId', 'account') || 'U_DEFAULT',
         securityId: secId,
-        symbol,
+        symbol: canonicalSymbol,
         date,
         transactionType: txType,
         quantity: '0',
@@ -564,8 +700,13 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
 
     for (const p of posList) {
       const symbol = getAttr(p, 'symbol', 'ticker');
+      const assetCat = (getAttr(p, 'assetCategory', 'assetClass') || 'STK').toUpperCase();
+      if (isNonEquityOrCash(symbol, assetCat)) continue;
+
       const conid = getAttr(p, 'conid', 'conId');
-      const secId = conid ? `CON_${conid}` : `SYM_${symbol}`;
+      const isin = getAttr(p, 'isin', 'ISIN');
+      const secId = resolveCanonicalId(conid, isin, symbol);
+      const canonicalSymbol = canonicalToPrimarySymbol.get(secId) || symbol;
       const qty = getNum(p, 'position', 'quantity', 'units');
       const costPrice = getNum(p, 'costBasisPrice', 'openPrice', 'costPrice');
       const markPrice = getNum(p, 'markPrice', 'price', 'closePrice');
@@ -579,7 +720,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
       openPositions.push({
         accountId: getAttr(p, 'accountId', 'account') || 'U_DEFAULT',
         securityId: secId,
-        symbol,
+        symbol: canonicalSymbol,
         conid,
         isin: getAttr(p, 'isin', 'ISIN'),
         quantity: String(qty),
@@ -609,8 +750,12 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
 
     for (const opt of optList) {
       const symbol = getAttr(opt, 'symbol', 'ticker');
+      if (isNonEquityOrCash(symbol)) continue;
+
       const conid = getAttr(opt, 'conid', 'conId');
-      const secId = conid ? `CON_${conid}` : `SYM_${symbol}`;
+      const isin = getAttr(opt, 'isin', 'ISIN');
+      const secId = resolveCanonicalId(conid, isin, symbol);
+      const canonicalSymbol = canonicalToPrimarySymbol.get(secId) || symbol;
       const rawDate = getAttr(opt, 'tradeDate', 'reportDate', 'date', 'dateTime');
       const { date } = parseIbkrDate(rawDate);
       const qty = Math.abs(getNum(opt, 'quantity', 'units', 'position'));
@@ -644,7 +789,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
           if (t.ibkrExecutionId && t.ibkrExecutionId === optId) return true;
           if (t.id === `IBKR_TR_${optId}` || t.id === `IBKR_OPT_${optId}`) return true;
         }
-        if (conid && t.date === date && t.securityId === `CON_${conid}`) {
+        if (secId && t.date === date && t.securityId === secId) {
           const tQty = Math.abs(parseFloat(t.quantity || '0'));
           if (tQty === qty || tQty === qty * 100) return true;
         }
@@ -664,7 +809,7 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
         id: `IBKR_OPT_${optId}`,
         accountId: getAttr(opt, 'accountId', 'account') || 'U_DEFAULT',
         securityId: secId,
-        symbol,
+        symbol: canonicalSymbol,
         date,
         transactionType: txType,
         quantity: String(qty),
@@ -697,8 +842,12 @@ export function parseIbkrFlexXml(xmlContent: string): ParsedFlexStatement {
 
     for (const xfer of xferList) {
       const symbol = getAttr(xfer, 'symbol', 'ticker');
+      if (isNonEquityOrCash(symbol)) continue;
+
       const conid = getAttr(xfer, 'conid', 'conId');
-      const secId = conid ? `CON_${conid}` : `SYM_${symbol}`;
+      const isin = getAttr(xfer, 'isin', 'ISIN');
+      const secId = resolveCanonicalId(conid, isin, symbol);
+      const canonicalSymbol = canonicalToPrimarySymbol.get(secId) || symbol;
       const rawDate = getAttr(xfer, 'date', 'reportDate', 'dateTime');
       const { date } = parseIbkrDate(rawDate);
       const qty = Math.abs(getNum(xfer, 'quantity', 'units'));

@@ -188,9 +188,11 @@ function main() {
     // Engine summary
     const engineOutput = runAcbEngine(redactedTransactions, redactedAccounts, rawParsed.securities);
 
-    const activeBalances = Array.from(engineOutput.securityBalances.values()).filter((b) =>
-      d(b.quantity).isPositive()
-    );
+    const activeBalances = Array.from(engineOutput.securityBalances.values()).filter((b) => {
+      const q = d(b.quantity);
+      const acb = d(b.totalAcbCad);
+      return q.gt(0) && !acb.isNaN() && acb.isFinite();
+    });
 
     activeBalances.sort((a, b) => d(b.totalAcbCad).minus(d(a.totalAcbCad)).toNumber());
 
@@ -202,7 +204,8 @@ function main() {
     topList.forEach((bal) => {
       const qtyStr = bal.quantity;
       const acbStr = `$${bal.totalAcbCad}`;
-      const perUnitStr = `$${bal.acbPerUnitCad || toMoney(d(bal.totalAcbCad).dividedBy(d(bal.quantity)))}`;
+      const perUnitVal = d(bal.acbPerUnitCad);
+      const perUnitStr = `$${!perUnitVal.isNaN() && perUnitVal.isFinite() ? toMoney(perUnitVal) : '0.00'}`;
       lines.push(`  - ${bal.symbol.padEnd(8)} ${qtyStr.padStart(8)}  ${acbStr.padStart(12)}  ${perUnitStr.padStart(10)}/unit`);
     });
     if (activeBalances.length > 25) {
@@ -215,7 +218,10 @@ function main() {
       .filter((y) => !isNaN(y) && y > 0);
     const latestYear = years.length > 0 ? Math.max(...years) : new Date().getFullYear();
     const rglLatest = engineOutput.realizedGainsLosses.filter((r) => Number(r.taxYear) === latestYear);
-    const netGainsCad = rglLatest.reduce((acc, r) => acc.plus(d(r.recognizedGainLossCad)), d(0));
+    const netGainsCad = rglLatest.reduce((acc, r) => {
+      const val = d(r.recognizedGainLossCad);
+      return !val.isNaN() && val.isFinite() ? acc.plus(val) : acc;
+    }, d(0));
 
     lines.push(`- Realized (year ${latestYear}): count=${rglLatest.length} net=$${toMoney(netGainsCad)}`);
 
