@@ -7,5 +7,7 @@ coverage/
 .env*
 !.env.example
 data/
+data/*.xml
+*Flex*.xml
+*flex-statement*
 *.xml
-*flex*

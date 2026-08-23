@@ -39,6 +39,7 @@ npm run dev
 Open `http://localhost:3000` in your browser.
 
 ### 5. Run Test Suite & E2E Report
+`bun run e2e:report` executes `scripts/e2e-report.ts` via `tsx` to verify all test fixtures:
 ```bash
 bun run e2e:report
 # Or test with an external Flex XML statement (outside workspace):
@@ -47,7 +48,7 @@ bun run e2e:report --flex /path/to/statement.xml
 
 ### 6. Stop & Reset
 - **Stop server**: Press `Ctrl+C` in the terminal.
-- **Reset local data**: Clear browser `localStorage` key `canadian_acb_data_v1` or click Reset in Settings.
+- **Reset local data**: Clear browser `localStorage` key `canadian_acb_data_v1`.
 
 ### Security
 - `.env`, `data/`, `*.xml`, and `*flex*` files are ignored by `.gitignore`.
@@ -80,7 +81,7 @@ The application is structured into functional tabs for managing tax calculations
 | **Accounts** | Map accounts as taxable vs registered (TFSA/RRSP/FHSA) and tag household affiliates. |
 | **Settings** | Select FX rate source (Bank of Canada vs broker), tax inclusion rate, and day-trader warning. |
 | **Manual Entry** | Enter opening ACB, manual trades, corporate action wizard, option exercise, and tax overrides. |
-| **Test Suite** | Run internal tax engine test fixtures (must maintain 22/22 pass rate). |
+| **Test Suite** | Run internal tax engine test fixtures (verify all fixtures in Test Suite / e2e:report). |
 
 ### Engine Core
 - Calculates one shared taxable ACB pool per identical security across all non-registered accounts (ITA s. 47).
@@ -91,9 +92,9 @@ The application is structured into functional tabs for managing tax calculations
 
 ## Project Layout
 
-- `src/engine/` — Core Canadian ACB engine (`acbEngine.ts`), Decimal math (`decimal.ts`), and test fixtures (`testFixtures.ts`).
+- `src/engine/` — Core Canadian ACB engine (`acbEngine.ts`), Bank of Canada FX rates (`bocFx.ts`), Decimal math (`decimal.ts`), and test fixtures (`testFixtures.ts`).
 - `src/parsers/` — IBKR Flex Web Service XML parser (`ibkrFlexXmlParser.ts`).
-- `src/services/` — IBKR Flex Web Service API client and Bank of Canada FX fetching.
+- `src/services/` — IBKR Flex Web Service API client (`ibkrFlexService.ts`).
 - `src/components/` — React UI components for Dashboard, Ledger, Connections, Reports, etc.
 - `server.ts` — Express proxy server for IBKR Flex Web Service, Bank of Canada FX, and Gemini AI.
 - `scripts/` — CLI utilities (`e2e-report.ts` for fixture verification and external statement audit).
