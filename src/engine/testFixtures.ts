@@ -1176,22 +1176,26 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     const out = runAcbEngine(txs, [taxableAcct], [sec]);
     const sellTx = txs[1];
     const rgl = out.realizedGainsLosses[0];
+    const sellLedger = out.ledger.find(l => l.transactionId === 'SELL_100');
 
     const passed = sellTx.status === 'needs_review' &&
       sellTx.reasonCode === 'QTY_SHORTFALL' &&
       rgl !== undefined &&
       Number(rgl.quantityDisposed) === 40 &&
-      Number(rgl.recognizedGainLossCad) === 400; // Proceeds 40*20=$800 - ACB 400 = $400 gain on covered portion
+      Number(rgl.recognizedGainLossCad) === 400 &&
+      sellLedger !== undefined &&
+      sellLedger.quantityChange === '-40' &&
+      sellLedger.realizedGainLossCad === '400.00'; // Proceeds 40*20=$800 - ACB 400 = $400 gain on covered portion
 
     results.push({
       id: 'synthetic-shortfall-partial-sell',
       name: 'Partial Disposition Quantity Shortfall Protection',
       category: 'Acquisition Protection',
-      description: 'Hold 40, sell 100: computes gain on covered 40 shares ($400 gain), flags 60 shortfall shares as QTY_SHORTFALL / needs_review.',
+      description: 'Hold 40, sell 100: computes gain on covered 40 shares ($400 gain), sets quantityChange to -40, flags 60 shortfall shares as QTY_SHORTFALL / needs_review.',
       statutoryCitations: ['ITA s. 40(1)', 'ITA s. 47'],
       passed,
-      expectedResult: 'sellTx.status: needs_review, reasonCode: QTY_SHORTFALL, Covered Qty: 40, Covered Gain: $400.00 CAD',
-      actualResult: `sellTx.status: ${sellTx.status}, reasonCode: ${sellTx.reasonCode}, Covered Qty: ${rgl?.quantityDisposed}, Covered Gain: $${rgl?.recognizedGainLossCad} CAD`,
+      expectedResult: 'sellTx.status: needs_review, reasonCode: QTY_SHORTFALL, Covered Qty: 40, Covered Gain: $400.00 CAD, quantityChange: -40',
+      actualResult: `sellTx.status: ${sellTx.status}, reasonCode: ${sellTx.reasonCode}, Covered Qty: ${rgl?.quantityDisposed}, Covered Gain: $${rgl?.recognizedGainLossCad} CAD, quantityChange: ${sellLedger?.quantityChange}`,
       auditTrail: out.auditTrail,
       executionTimeMs: performance.now() - start,
     });
@@ -1241,6 +1245,56 @@ export function runAllTestFixtures(): TestFixtureResult[] {
       statutoryCitations: ['ITA s. 40(1)', 'ITA s. 47'],
       passed,
       expectedResult: 'sellTx.status: approved, reasonCode: undefined, Disposed Qty: 100, Gain: $1,120.00 CAD',
+      actualResult: `sellTx.status: ${sellTx.status}, reasonCode: ${sellTx.reasonCode}, Disposed Qty: ${rgl?.quantityDisposed}, Gain: $${rgl?.recognizedGainLossCad} CAD`,
+      auditTrail: out.auditTrail,
+      executionTimeMs: performance.now() - start,
+    });
+  }
+
+  // 28. Synthetic Test: Documented $0 ACB from ROC does NOT trigger MISSING_ACB
+  {
+    const start = performance.now();
+    const sec: SecurityMaster = { id: 'SEC_SHOP_4', symbol: 'SHOP', name: 'Shopify Inc.', assetClass: 'STK', currency: 'CAD' };
+    const txs: Transaction[] = [
+      {
+        id: 'BUY_100_ROC', accountId: 'ACCT_TAXABLE', securityId: 'SEC_SHOP_4', symbol: 'SHOP', date: '2024-01-01',
+        transactionType: 'BUY', quantity: '100', price: '10', currency: 'CAD', commission: '0', totalGrossAmount: '1000',
+        totalNetAmount: '1000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '1000', commissionCad: '0', totalOutlaysCad: '0',
+        status: 'approved', source: 'TEST_FIXTURE',
+      },
+      {
+        id: 'ROC_1000', accountId: 'ACCT_TAXABLE', securityId: 'SEC_SHOP_4', symbol: 'SHOP', date: '2024-03-01',
+        transactionType: 'RETURN_OF_CAPITAL', quantity: '0', price: '0', currency: 'CAD', commission: '0', totalGrossAmount: '1000',
+        totalNetAmount: '1000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '1000', commissionCad: '0', totalOutlaysCad: '0',
+        status: 'approved', source: 'TEST_FIXTURE',
+      },
+      {
+        id: 'SELL_50_AFTER_ROC', accountId: 'ACCT_TAXABLE', securityId: 'SEC_SHOP_4', symbol: 'SHOP', date: '2024-05-10',
+        transactionType: 'SELL', quantity: '50', price: '15', currency: 'CAD', commission: '0', totalGrossAmount: '750',
+        totalNetAmount: '750', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '750', commissionCad: '0', totalOutlaysCad: '0',
+        status: 'approved', source: 'TEST_FIXTURE',
+      },
+    ];
+
+    const out = runAcbEngine(txs, [taxableAcct], [sec]);
+    const sellTx = txs[2];
+    const rgl = out.realizedGainsLosses[0];
+
+    // Held Qty = 100, Total ACB = 0 (from $1000 buy - $1000 ROC). Selling 50 shares @ $15 = $750 gain.
+    const passed = sellTx.status === 'approved' &&
+      sellTx.reasonCode === undefined &&
+      rgl !== undefined &&
+      Number(rgl.quantityDisposed) === 50 &&
+      Number(rgl.recognizedGainLossCad) === 750;
+
+    results.push({
+      id: 'synthetic-roc-zero-acb-no-flag',
+      name: 'Documented $0 ACB from ROC Does Not Trigger MISSING_ACB',
+      category: 'Acquisition Protection',
+      description: 'When heldQty > 0 and pool ACB was reduced to $0 by ROC, selling shares must NOT trigger MISSING_ACB. Full gain ($750) is calculated.',
+      statutoryCitations: ['ITA s. 53(2)(a)', 'ITA s. 40(1)'],
+      passed,
+      expectedResult: 'sellTx.status: approved, reasonCode: undefined, Disposed Qty: 50, Gain: $750.00 CAD',
       actualResult: `sellTx.status: ${sellTx.status}, reasonCode: ${sellTx.reasonCode}, Disposed Qty: ${rgl?.quantityDisposed}, Gain: $${rgl?.recognizedGainLossCad} CAD`,
       auditTrail: out.auditTrail,
       executionTimeMs: performance.now() - start,

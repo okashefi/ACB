@@ -432,25 +432,63 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                 </p>
               </div>
 
-              {/* Capital Gain/Loss or Missing ACB Banner */}
-              {activeEntryDetails.realizedGainLossCad === undefined || activeEntryDetails.notes?.includes('ACB unknown') || activeEntryDetails.statutoryRule.includes('ACB Unknown') ? (
-                <div className="p-3.5 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-xl space-y-1 text-amber-900 dark:text-amber-200 font-sans">
-                  <div className="font-bold text-xs flex items-center gap-1.5 text-amber-800 dark:text-amber-300">
-                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                    <span>Gain not calculated — missing acquisition cost</span>
+              {/* Capital Gain/Loss and/or Missing ACB Shortfall Banner */}
+              {(() => {
+                const relatedRgl = engineOutput.realizedGainsLosses.find(r => r.dispositionTransactionId === activeEntryDetails.transactionId);
+                const hasPnl = activeEntryDetails.realizedGainLossCad !== undefined;
+                const isShortfallOrMissing =
+                  !hasPnl ||
+                  activeEntryDetails.notes?.includes('ACB unknown') ||
+                  activeEntryDetails.notes?.includes('shortfall') ||
+                  activeEntryDetails.notes?.includes('Shortfall') ||
+                  activeEntryDetails.statutoryRule.includes('ACB Unknown') ||
+                  activeEntryDetails.statutoryRule.includes('Shortfall');
+
+                return (
+                  <div className="space-y-3">
+                    {hasPnl && (
+                      <div className="space-y-2 bg-slate-50 dark:bg-zinc-800/60 p-3.5 rounded-xl border border-zinc-200 dark:border-zinc-800 font-sans text-xs">
+                        {relatedRgl && (
+                          <div className="grid grid-cols-3 gap-2 pb-2.5 border-b border-zinc-200 dark:border-zinc-700 font-mono text-[11px]">
+                            <div>
+                              <span className="text-zinc-500 dark:text-zinc-400 font-sans block text-[10px]">Gross Proceeds</span>
+                              <span className="font-semibold text-zinc-900 dark:text-zinc-100">{formatCad(relatedRgl.grossProceedsCad)}</span>
+                            </div>
+                            <div>
+                              <span className="text-zinc-500 dark:text-zinc-400 font-sans block text-[10px]">ACB Removed</span>
+                              <span className="font-semibold text-zinc-900 dark:text-zinc-100">{formatCad(relatedRgl.acbOfUnitsDisposedCad)}</span>
+                            </div>
+                            <div>
+                              <span className="text-zinc-500 dark:text-zinc-400 font-sans block text-[10px]">Outlays / Comm</span>
+                              <span className="font-semibold text-zinc-900 dark:text-zinc-100">{formatCad(relatedRgl.dispositionOutlaysCad)}</span>
+                            </div>
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between pt-0.5">
+                          <span className="text-zinc-600 dark:text-zinc-400 font-medium">Realized Capital Gain / Loss (CAD):</span>
+                          <span className={`font-bold font-mono text-sm ${d(activeEntryDetails.realizedGainLossCad).gte(0) ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                            {d(activeEntryDetails.realizedGainLossCad).gte(0) ? `+${formatCad(activeEntryDetails.realizedGainLossCad)}` : formatCad(activeEntryDetails.realizedGainLossCad)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {isShortfallOrMissing && (
+                      <div className="p-3.5 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-xl space-y-1 text-amber-900 dark:text-amber-200 font-sans">
+                        <div className="font-bold text-xs flex items-center gap-1.5 text-amber-800 dark:text-amber-300">
+                          <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                          <span>{hasPnl ? 'Shortfall portion gain not calculated' : 'Gain not calculated — missing acquisition cost'}</span>
+                        </div>
+                        <p className="text-[11px] leading-relaxed">
+                          {hasPnl
+                            ? 'Shortfall portion gain was not calculated due to missing acquisitions. The realized gain above reflects only the covered shares.'
+                            : 'This disposition lacks known acquisition cost base history. Under Canadian tax rules, a gain cannot be calculated without cost basis. Enter an Opening ACB or missing buys to resolve.'}
+                        </p>
+                      </div>
+                    )}
                   </div>
-                  <p className="text-[11px] leading-relaxed">
-                    This disposition lacks known acquisition cost base history. Under Canadian tax rules, a gain cannot be calculated without cost basis. Enter an Opening ACB or missing buys to resolve.
-                  </p>
-                </div>
-              ) : (
-                <div className="p-3 bg-slate-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-800 rounded-xl flex items-center justify-between font-sans">
-                  <span className="text-xs text-zinc-500 dark:text-zinc-400 font-medium">Realized Capital Gain / Loss (CAD):</span>
-                  <span className={`text-sm font-bold font-mono ${d(activeEntryDetails.realizedGainLossCad).gte(0) ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                    {d(activeEntryDetails.realizedGainLossCad).gte(0) ? `+${formatCad(activeEntryDetails.realizedGainLossCad)}` : formatCad(activeEntryDetails.realizedGainLossCad)}
-                  </span>
-                </div>
-              )}
+                );
+              })()}
 
               <div className="grid grid-cols-2 gap-3 pt-1 font-mono">
                 <div className="p-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700">

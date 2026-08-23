@@ -43,12 +43,12 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({
 
   // Common fields
   const [accountId, setAccountId] = useState<string>(accounts[0]?.id || 'acc-taxable-1');
-  const [symbol, setSymbol] = useState<string>(initialSymbol || 'RY.TO');
+  const [symbol, setSymbol] = useState<string>(initialSymbol || '');
 
   React.useEffect(() => {
     if (isOpen) {
       if (initialMode) setMode(initialMode);
-      if (initialSymbol) setSymbol(initialSymbol);
+      setSymbol(initialSymbol || '');
     }
   }, [isOpen, initialMode, initialSymbol]);
   const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);

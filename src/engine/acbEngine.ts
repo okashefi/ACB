@@ -327,6 +327,7 @@ export function runAcbEngine(
         book.totalAcbCad
       );
 
+      // Corporate action disposition handling (e.g. FULL_CASH_DISPOSITION or foreign exchange)
       const oldSharesDisposed = d(caResult.oldSharesDisposedQty);
       const oldAcbRemoved = d(caResult.oldSharesAcbRemovedCad);
       const newSharesQty = d(caResult.newSharesQty);
@@ -338,6 +339,112 @@ export function runAcbEngine(
       const rocInc = d(caResult.returnOfCapitalCad);
 
       const priorPerUnitAcb = book.acbPerUnitCad;
+      const heldQty = book.quantity;
+
+      const isTaxableDispositionCa =
+        tx.corporateAction.treatment === 'FULL_CASH_DISPOSITION' ||
+        tx.corporateAction.treatment === 'FOREIGN_SHARE_EXCHANGE_TAXABLE' ||
+        tx.corporateAction.treatment === 'MIXED_CAPITAL_BOOT_TAXABLE';
+
+      const isCaMissingAcb = heldQty.isZero() && (oldSharesDisposed.greaterThan(0) || isTaxableDispositionCa);
+      const isCaShortfall = oldSharesDisposed.greaterThan(heldQty.plus(0.0001));
+
+      if (isTaxableDispositionCa && (isCaMissingAcb || isCaShortfall)) {
+        tx.status = 'needs_review';
+        tx.reasonCode = heldQty.isZero() ? 'MISSING_ACB' : 'QTY_SHORTFALL';
+        tx.reviewNotes = 'Corporate action disposition has no (or not enough) known acquisitions. Enter Opening ACB or import earlier buys (price, date, qty, CAD).';
+
+        const coveredQty = heldQty.greaterThan(0) ? Decimal.min(heldQty, oldSharesDisposed) : d(0);
+        const shortfallQty = oldSharesDisposed.minus(coveredQty);
+
+        if (coveredQty.greaterThan(0)) {
+          const coveredRatio = coveredQty.div(oldSharesDisposed);
+          const coveredAcbRemoved = coveredQty.times(priorPerUnitAcb);
+          const coveredProceeds = proceeds.times(coveredRatio);
+          const coveredGainLoss = coveredProceeds.minus(coveredAcbRemoved);
+
+          book.quantity = Decimal.max(0, book.quantity.minus(coveredQty));
+          book.totalAcbCad = Decimal.max(0, book.totalAcbCad.minus(coveredAcbRemoved));
+          updateBookAverages(book);
+
+          realizedGainsLosses.push({
+            id: `RGL_${tx.id}`,
+            taxYear: txYear,
+            dispositionDate: tx.date,
+            securityId: canonicalId,
+            symbol: canonicalSym,
+            securityName: secName,
+            assetClass: sec?.assetClass || 'STK',
+            quantityDisposed: toShares(coveredQty),
+            grossProceedsCad: toMoney(coveredProceeds),
+            dispositionOutlaysCad: '0.00',
+            netProceedsCad: toMoney(coveredProceeds),
+            acbPerUnitPriorCad: toMoney(priorPerUnitAcb),
+            acbOfUnitsDisposedCad: toMoney(coveredAcbRemoved),
+            rawGainLossCad: toMoney(coveredGainLoss),
+            isSuperficialLoss: false,
+            superficialLossDeniedCad: '0.00',
+            isPermanentlyDeniedInRegistered: false,
+            recognizedGainLossCad: toMoney(coveredGainLoss),
+            dispositionTransactionId: tx.id,
+            statutoryCitations: [caResult.statutoryBasis],
+            explanation: `Corporate action cash disposition of ${toShares(coveredQty)} covered units at proceeds $${toMoney(coveredProceeds)} CAD vs ACB $${toMoney(coveredAcbRemoved)} CAD. Remaining ${toShares(shortfallQty)} units flagged QTY_SHORTFALL.`,
+          });
+
+          ledger.push({
+            id: `LED_${tx.id}`,
+            date: tx.date,
+            securityId: canonicalId,
+            symbol: canonicalSym,
+            transactionId: tx.id,
+            transactionType: tx.transactionType,
+            description: `Corporate Action: ${tx.corporateAction.treatment} (${toShares(coveredQty)} covered; ${toShares(shortfallQty)} units ACB unknown)`,
+            quantityChange: toShares(newSharesQty.minus(coveredQty)),
+            runningQuantity: toShares(book.quantity),
+            costChangeCad: toMoney(newSharesTotalAcb.minus(coveredAcbRemoved)),
+            runningTotalAcbCad: toMoney(book.totalAcbCad),
+            runningAcbPerUnitCad: toMoney(book.acbPerUnitCad),
+            realizedGainLossCad: toMoney(coveredGainLoss),
+            originalCurrency: tx.currency,
+            fxRateUsed: toRate(d(tx.fxRate || 1)),
+            fxRateSource: tx.fxRateSource,
+            statutoryRule: caResult.statutoryBasis,
+            notes: `ACB unknown for ${toShares(shortfallQty)} units — gain for shortfall portion not reported yet. Enter Opening ACB or missing buys.`,
+          });
+        } else {
+          ledger.push({
+            id: `LED_${tx.id}`,
+            date: tx.date,
+            securityId: canonicalId,
+            symbol: canonicalSym,
+            transactionId: tx.id,
+            transactionType: tx.transactionType,
+            description: `Corporate Action: ${tx.corporateAction.treatment} (ACB unknown — missing acquisition cost)`,
+            quantityChange: toShares(newSharesQty),
+            runningQuantity: toShares(book.quantity),
+            costChangeCad: '0.00',
+            runningTotalAcbCad: toMoney(book.totalAcbCad),
+            runningAcbPerUnitCad: toMoney(book.acbPerUnitCad),
+            realizedGainLossCad: undefined,
+            originalCurrency: tx.currency,
+            fxRateUsed: toRate(d(tx.fxRate || 1)),
+            fxRateSource: tx.fxRateSource,
+            statutoryRule: 'ACB Unknown — Missing Acquisition Cost',
+            notes: 'ACB unknown — not reported as a gain yet. Enter Opening ACB or missing buys.',
+          });
+        }
+
+        auditTrail.push(`[${tx.date}] ${canonicalSym} Corporate Action ${tx.corporateAction.treatment}: Flagged ${tx.reasonCode}. Gain for missing ACB not calculated.`);
+        continue;
+      }
+
+      if (tx.reasonCode === 'MISSING_ACB' || tx.reasonCode === 'QTY_SHORTFALL') {
+        tx.reasonCode = undefined;
+        tx.reviewNotes = undefined;
+        if ((tx.status as string) === 'needs_review') {
+          tx.status = 'approved';
+        }
+      }
 
       // Apply old shares removal
       if (oldSharesDisposed.greaterThan(0)) {
@@ -357,11 +464,6 @@ export function runAcbEngine(
       }
 
       // Record capital gains / losses if recognized or if event is a real taxable disposition
-      const isTaxableDispositionCa =
-        tx.corporateAction.treatment === 'FULL_CASH_DISPOSITION' ||
-        tx.corporateAction.treatment === 'FOREIGN_SHARE_EXCHANGE_TAXABLE' ||
-        tx.corporateAction.treatment === 'MIXED_CAPITAL_BOOT_TAXABLE';
-
       const hasRecognizedGainOrLoss = realizedGain.greaterThan(0) || realizedLoss.greaterThan(0);
 
       if (hasRecognizedGainOrLoss || isTaxableDispositionCa) {
@@ -504,38 +606,142 @@ export function runAcbEngine(
         } else if (deltaQty.isNegative()) {
           // Dispose shares (e.g. Assigned Short Call, Exercise Long Put)
           const disposedQty = deltaQty.abs();
+          const heldQty = targetBook.quantity;
           const perUnitAcb = targetBook.acbPerUnitCad;
-          const acbRemoved = perUnitAcb.times(disposedQty);
-          const grossProceeds = d(effect.shareProceedsCad);
-          const netGainLoss = grossProceeds.minus(acbRemoved);
 
-          targetBook.quantity = Decimal.max(0, targetBook.quantity.minus(disposedQty));
-          targetBook.totalAcbCad = Decimal.max(0, targetBook.totalAcbCad.minus(acbRemoved));
-          updateBookAverages(targetBook);
+          const isMissingAcb = heldQty.isZero();
+          const isShortfall = disposedQty.greaterThan(heldQty.plus(0.0001));
 
-          realizedGainsLosses.push({
-            id: `RGL_${tx.id}`,
-            taxYear: txYear,
-            dispositionDate: tx.date,
-            securityId: targetBookId,
-            symbol: underlyingSymbol,
-            securityName: underlyingSymbol,
-            assetClass: 'STK',
-            quantityDisposed: toShares(disposedQty),
-            grossProceedsCad: toMoney(grossProceeds),
-            dispositionOutlaysCad: toMoney(tx.commissionCad),
-            netProceedsCad: toMoney(grossProceeds),
-            acbPerUnitPriorCad: toMoney(perUnitAcb),
-            acbOfUnitsDisposedCad: toMoney(acbRemoved),
-            rawGainLossCad: toMoney(netGainLoss),
-            isSuperficialLoss: false,
-            superficialLossDeniedCad: toMoney(0),
-            isPermanentlyDeniedInRegistered: false,
-            recognizedGainLossCad: toMoney(netGainLoss),
-            dispositionTransactionId: tx.id,
-            statutoryCitations: [effect.statutoryBasis],
-            explanation: effect.optionExplanation,
-          });
+          if (isMissingAcb || isShortfall) {
+            tx.status = 'needs_review';
+            tx.reasonCode = heldQty.isZero() ? 'MISSING_ACB' : 'QTY_SHORTFALL';
+            tx.reviewNotes = 'Option share delivery disposition has no (or not enough) known acquisitions. Enter Opening ACB or import earlier buys (price, date, qty, CAD).';
+
+            const coveredQty = heldQty.greaterThan(0) ? Decimal.min(heldQty, disposedQty) : d(0);
+            const shortfallQty = disposedQty.minus(coveredQty);
+
+            if (coveredQty.greaterThan(0)) {
+              const coveredRatio = coveredQty.div(disposedQty);
+              const coveredAcbRemoved = coveredQty.times(perUnitAcb);
+              const grossProceeds = d(effect.shareProceedsCad);
+              const coveredGrossProceeds = grossProceeds.times(coveredRatio);
+              const coveredNetGainLoss = coveredGrossProceeds.minus(coveredAcbRemoved);
+
+              targetBook.quantity = Decimal.max(0, targetBook.quantity.minus(coveredQty));
+              targetBook.totalAcbCad = Decimal.max(0, targetBook.totalAcbCad.minus(coveredAcbRemoved));
+              updateBookAverages(targetBook);
+
+              realizedGainsLosses.push({
+                id: `RGL_${tx.id}`,
+                taxYear: txYear,
+                dispositionDate: tx.date,
+                securityId: targetBookId,
+                symbol: underlyingSymbol,
+                securityName: underlyingSymbol,
+                assetClass: 'STK',
+                quantityDisposed: toShares(coveredQty),
+                grossProceedsCad: toMoney(coveredGrossProceeds),
+                dispositionOutlaysCad: toMoney(d(tx.commissionCad).times(coveredRatio)),
+                netProceedsCad: toMoney(coveredGrossProceeds),
+                acbPerUnitPriorCad: toMoney(perUnitAcb),
+                acbOfUnitsDisposedCad: toMoney(coveredAcbRemoved),
+                rawGainLossCad: toMoney(coveredNetGainLoss),
+                isSuperficialLoss: false,
+                superficialLossDeniedCad: '0.00',
+                isPermanentlyDeniedInRegistered: false,
+                recognizedGainLossCad: toMoney(coveredNetGainLoss),
+                dispositionTransactionId: tx.id,
+                statutoryCitations: [effect.statutoryBasis],
+                explanation: `Disposed ${toShares(coveredQty)} covered units via option share delivery at net proceeds $${toMoney(coveredGrossProceeds)} CAD vs ACB $${toMoney(coveredAcbRemoved)} CAD. Remaining ${toShares(shortfallQty)} units flagged QTY_SHORTFALL.`,
+              });
+
+              ledger.push({
+                id: `LED_${tx.id}`,
+                date: tx.date,
+                securityId: canonicalId,
+                symbol: canonicalSym,
+                transactionId: tx.id,
+                transactionType: tx.transactionType,
+                description: effect.optionExplanation + ` (${toShares(coveredQty)} covered; ${toShares(shortfallQty)} units ACB unknown)`,
+                quantityChange: toShares(coveredQty.negated()),
+                runningQuantity: toShares(targetBook.quantity),
+                costChangeCad: toMoney(coveredAcbRemoved.negated()),
+                runningTotalAcbCad: toMoney(targetBook.totalAcbCad),
+                runningAcbPerUnitCad: toMoney(targetBook.acbPerUnitCad),
+                realizedGainLossCad: toMoney(coveredNetGainLoss),
+                originalCurrency: tx.currency,
+                fxRateUsed: toRate(d(tx.fxRate || 1)),
+                fxRateSource: tx.fxRateSource,
+                statutoryRule: effect.statutoryBasis,
+                notes: `ACB unknown for ${toShares(shortfallQty)} units — gain for shortfall portion not reported yet. Enter Opening ACB or missing buys.`,
+              });
+            } else {
+              ledger.push({
+                id: `LED_${tx.id}`,
+                date: tx.date,
+                securityId: canonicalId,
+                symbol: canonicalSym,
+                transactionId: tx.id,
+                transactionType: tx.transactionType,
+                description: effect.optionExplanation + ` (ACB unknown — missing acquisition cost)`,
+                quantityChange: '0',
+                runningQuantity: toShares(targetBook.quantity),
+                costChangeCad: '0.00',
+                runningTotalAcbCad: toMoney(targetBook.totalAcbCad),
+                runningAcbPerUnitCad: toMoney(targetBook.acbPerUnitCad),
+                realizedGainLossCad: undefined,
+                originalCurrency: tx.currency,
+                fxRateUsed: toRate(d(tx.fxRate || 1)),
+                fxRateSource: tx.fxRateSource,
+                statutoryRule: 'ACB Unknown — Missing Acquisition Cost',
+                notes: 'ACB unknown — not reported as a gain yet. Enter Opening ACB or missing buys.',
+              });
+            }
+
+            auditTrail.push(
+              `[${tx.date}] Option Event ${tx.transactionType} (${canonicalSym}): Flagged ${tx.reasonCode}. Gain for missing ACB not calculated.`
+            );
+          } else {
+            if (tx.reasonCode === 'MISSING_ACB' || tx.reasonCode === 'QTY_SHORTFALL') {
+              tx.reasonCode = undefined;
+              tx.reviewNotes = undefined;
+              if ((tx.status as string) === 'needs_review') {
+                tx.status = 'approved';
+              }
+            }
+
+            const acbRemoved = perUnitAcb.times(disposedQty);
+            const grossProceeds = d(effect.shareProceedsCad);
+            const netGainLoss = grossProceeds.minus(acbRemoved);
+
+            targetBook.quantity = Decimal.max(0, targetBook.quantity.minus(disposedQty));
+            targetBook.totalAcbCad = Decimal.max(0, targetBook.totalAcbCad.minus(acbRemoved));
+            updateBookAverages(targetBook);
+
+            realizedGainsLosses.push({
+              id: `RGL_${tx.id}`,
+              taxYear: txYear,
+              dispositionDate: tx.date,
+              securityId: targetBookId,
+              symbol: underlyingSymbol,
+              securityName: underlyingSymbol,
+              assetClass: 'STK',
+              quantityDisposed: toShares(disposedQty),
+              grossProceedsCad: toMoney(grossProceeds),
+              dispositionOutlaysCad: toMoney(tx.commissionCad),
+              netProceedsCad: toMoney(grossProceeds),
+              acbPerUnitPriorCad: toMoney(perUnitAcb),
+              acbOfUnitsDisposedCad: toMoney(acbRemoved),
+              rawGainLossCad: toMoney(netGainLoss),
+              isSuperficialLoss: false,
+              superficialLossDeniedCad: toMoney(0),
+              isPermanentlyDeniedInRegistered: false,
+              recognizedGainLossCad: toMoney(netGainLoss),
+              dispositionTransactionId: tx.id,
+              statutoryCitations: [effect.statutoryBasis],
+              explanation: effect.optionExplanation,
+            });
+          }
         }
       }
 
@@ -733,13 +939,15 @@ export function runAcbEngine(
       const totalAcb = book.totalAcbCad;
       const perUnitAcb = book.acbPerUnitCad;
 
-      const isMissingAcb = heldQty.isZero() || (totalAcb.isZero() && heldQty.greaterThan(0));
+      const isMissingAcb = heldQty.isZero();
       const isShortfall = qtyDisposed.greaterThan(heldQty.plus(0.0001));
 
       if (isMissingAcb || isShortfall) {
         tx.status = 'needs_review';
-        tx.reasonCode = (heldQty.isZero() || totalAcb.isZero()) ? 'MISSING_ACB' : 'QTY_SHORTFALL';
+        tx.reasonCode = heldQty.isZero() ? 'MISSING_ACB' : 'QTY_SHORTFALL';
         tx.reviewNotes = 'This transfer out has no (or not enough) known acquisitions. Enter Opening ACB or import earlier buys (price, date, qty, CAD).';
+
+        const coveredQty = heldQty.greaterThan(0) ? Decimal.min(heldQty, qtyDisposed) : d(0);
 
         ledger.push({
           id: `LED_${tx.id}`,
@@ -749,7 +957,7 @@ export function runAcbEngine(
           transactionId: tx.id,
           transactionType: tx.transactionType,
           description: `Transfer Out of ${toShares(qtyDisposed)} units to ${dstAcctType?.toUpperCase() || 'REGISTERED'} (ACB unknown — missing acquisition cost)`,
-          quantityChange: toShares(qtyDisposed.negated()),
+          quantityChange: toShares(coveredQty.negated()),
           runningQuantity: toShares(book.quantity),
           costChangeCad: '0.00',
           runningTotalAcbCad: toMoney(book.totalAcbCad),
@@ -880,16 +1088,16 @@ export function runAcbEngine(
       const perUnitAcb = book.acbPerUnitCad;
 
       // Check if missing ACB or shortfall
-      const isMissingAcb = heldQty.isZero() || (totalAcb.isZero() && heldQty.greaterThan(0));
+      const isMissingAcb = heldQty.isZero();
       const isShortfall = qtyDisposed.greaterThan(heldQty.plus(0.0001));
 
       if (isMissingAcb || isShortfall) {
         tx.status = 'needs_review';
-        tx.reasonCode = (heldQty.isZero() || totalAcb.isZero()) ? 'MISSING_ACB' : 'QTY_SHORTFALL';
+        tx.reasonCode = heldQty.isZero() ? 'MISSING_ACB' : 'QTY_SHORTFALL';
         tx.reviewNotes = 'This sale has no (or not enough) known acquisitions. Enter Opening ACB or import earlier buys (price, date, qty, CAD).';
 
         // Covered portion check
-        const coveredQty = (heldQty.greaterThan(0) && totalAcb.greaterThan(0))
+        const coveredQty = heldQty.greaterThan(0)
           ? Decimal.min(heldQty, qtyDisposed)
           : d(0);
         const shortfallQty = qtyDisposed.minus(coveredQty);
@@ -948,7 +1156,7 @@ export function runAcbEngine(
             transactionId: tx.id,
             transactionType: tx.transactionType,
             description: `Disposition of ${toShares(qtyDisposed)} units (${toShares(coveredQty)} covered against $${toMoney(coveredAcbRemoved)} ACB; ${toShares(shortfallQty)} units ACB unknown)`,
-            quantityChange: toShares(qtyDisposed.negated()),
+            quantityChange: toShares(coveredQty.negated()),
             runningQuantity: toShares(book.quantity),
             costChangeCad: toMoney(coveredAcbRemoved.negated()),
             runningTotalAcbCad: toMoney(book.totalAcbCad),
@@ -970,7 +1178,7 @@ export function runAcbEngine(
             transactionId: tx.id,
             transactionType: tx.transactionType,
             description: `Disposition of ${toShares(qtyDisposed)} units (ACB unknown — missing acquisition cost)`,
-            quantityChange: toShares(qtyDisposed.negated()),
+            quantityChange: '0',
             runningQuantity: toShares(book.quantity),
             costChangeCad: '0.00',
             runningTotalAcbCad: toMoney(book.totalAcbCad),
