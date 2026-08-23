@@ -13,8 +13,11 @@ import { ImportModal } from './components/ImportModal';
 import { HelpView } from './components/HelpView';
 import { runAcbEngine, reconcilePositions } from './engine/acbEngine';
 import { d } from './engine/decimal';
-import { fetchIbkrFlexStatement } from './services/ibkrFlexService';
+import { fetchIbkrFlexStatement, FlexSyncResult } from './services/ibkrFlexService';
 import { parseIbkrFlexXml } from './parsers/ibkrFlexXmlParser';
+import { mergeAccounts, mergeSecurities, upsertTransactions, mergeOpenPositions } from './engine/syncMerge';
+import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
+import { useTheme } from './hooks/useTheme';
 import {
   Transaction,
   Account,
@@ -28,7 +31,15 @@ import {
 
 const LOCAL_STORAGE_KEY = 'canadian_acb_data_v1';
 
+export interface SyncBannerState {
+  type: 'success' | 'info' | 'error';
+  title: string;
+  message: string;
+  details?: string[];
+}
+
 export function App() {
+  const { theme, toggleTheme } = useTheme();
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [selectedTaxYear, setSelectedTaxYear] = useState<number | 'ALL'>('ALL');
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
@@ -65,26 +76,30 @@ export function App() {
     cpaReviewDisclaimerAcknowledged: false,
   });
 
-  // Load from localStorage on first load
+  const [syncBanner, setSyncBanner] = useState<SyncBannerState | null>(null);
+
+  // Load from localStorage on first load (ensuring token is never read/stored)
   useEffect(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
+        if (parsed.flexConfig) {
+          const safeFlex = { ...parsed.flexConfig };
+          delete safeFlex.token;
+          setFlexConfig(safeFlex);
+        }
+        if (parsed.taxSettings) setTaxSettings(parsed.taxSettings);
         if (parsed.transactions && parsed.transactions.length > 0) {
           setTransactions(parsed.transactions);
           setAccounts(parsed.accounts || []);
           setSecurities(parsed.securities || []);
           setOpenPositions(parsed.openPositions || []);
-          if (parsed.flexConfig) setFlexConfig(parsed.flexConfig);
-          if (parsed.taxSettings) setTaxSettings(parsed.taxSettings);
           return;
         } else if (parsed.accounts && parsed.accounts.length > 0) {
           setAccounts(parsed.accounts);
           setSecurities(parsed.securities || []);
           setOpenPositions(parsed.openPositions || []);
-          if (parsed.flexConfig) setFlexConfig(parsed.flexConfig);
-          if (parsed.taxSettings) setTaxSettings(parsed.taxSettings);
           return;
         }
       }
@@ -93,10 +108,13 @@ export function App() {
     }
   }, []);
 
-  // Save to localStorage
+  // Save to localStorage (strictly excluding plaintext token)
   useEffect(() => {
     try {
       if (transactions.length > 0 || accounts.length > 0) {
+        const safeFlexConfig = { ...flexConfig };
+        delete safeFlexConfig.token;
+
         localStorage.setItem(
           LOCAL_STORAGE_KEY,
           JSON.stringify({
@@ -104,7 +122,7 @@ export function App() {
             accounts,
             securities,
             openPositions,
-            flexConfig,
+            flexConfig: safeFlexConfig,
             taxSettings,
           })
         );
@@ -193,6 +211,7 @@ export function App() {
   // Trigger IBKR Sync
   const handleTriggerSync = async (isBackfill = false) => {
     setIsSyncing(true);
+    setSyncBanner(null);
     try {
       const fetchChunk = async (startDate?: string, endDate?: string) => {
         return await fetchIbkrFlexStatement({
@@ -203,7 +222,7 @@ export function App() {
         });
       };
 
-      let results: any[] = [];
+      let results: FlexSyncResult[] = [];
       const unavailableYears: number[] = [];
       const currentYear = new Date().getFullYear();
 
@@ -219,16 +238,20 @@ export function App() {
       });
       const startYear = Math.max(minAccountOpenYear, currentYear - 4);
 
-      if (isBackfill || true) { // Walk full CRA window (currentYear-4 through currentYear)
+      if (isBackfill || !flexConfig.lastSyncTimestamp) {
+        // Full backfill year walk (currentYear-4 through currentYear)
         const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
         for (let year = startYear; year <= currentYear; year++) {
           const startDate = `${year}0101`;
           const endDate = year === currentYear ? todayStr : `${year}1231`;
-          
+
           try {
             const res = await fetchChunk(startDate, endDate);
             if (res.success && res.parsedData) {
-              const hasTrades = res.parsedData.transactions.length > 0 || res.parsedData.hasTradesSection || res.parsedData.hasCashTransactionsSection;
+              const hasTrades =
+                res.parsedData.transactions.length > 0 ||
+                res.parsedData.hasTradesSection ||
+                res.parsedData.hasCashTransactionsSection;
               if (!hasTrades) {
                 unavailableYears.push(year);
               } else {
@@ -237,60 +260,64 @@ export function App() {
             } else {
               unavailableYears.push(year);
             }
-          } catch (chunkErr) {
+          } catch {
             unavailableYears.push(year);
           }
+        }
+      } else {
+        // Incremental Pull: last success date - 3 days to today
+        const lastSyncDate = new Date(flexConfig.lastSyncTimestamp);
+        const startDateObj = new Date(lastSyncDate.getTime() - 3 * 24 * 60 * 60 * 1000);
+        const startDate = startDateObj.toISOString().slice(0, 10).replace(/-/g, '');
+        const endDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+
+        try {
+          const res = await fetchChunk(startDate, endDate);
+          if (res.success && res.parsedData) {
+            results.push(res);
+          } else if (res.errorMessage) {
+            setSyncBanner({
+              type: 'error',
+              title: 'IBKR Sync Failed',
+              message: res.errorMessage,
+            });
+            setIsSyncing(false);
+            return;
+          }
+        } catch (err: any) {
+          setSyncBanner({
+            type: 'error',
+            title: 'IBKR Sync Exception',
+            message: err.message || 'Network error connecting to IBKR Flex Web Service',
+          });
+          setIsSyncing(false);
+          return;
         }
       }
 
       if (results.length > 0) {
-        const allParsed = results.map(r => r.parsedData).filter((p): p is NonNullable<typeof p> => Boolean(p));
-        
-        // Merge accounts
-        setAccounts((prev) => {
-          const map = new Map<string, Account>(prev.map((a) => [a.id, a]));
-          allParsed.forEach((parsed) => {
-            parsed.accounts.forEach((a) => map.set(a.id, a));
-          });
-          return Array.from(map.values());
+        const allParsed = results
+          .map((r) => r.parsedData)
+          .filter((p): p is NonNullable<typeof p> => Boolean(p));
+
+        const allIncomingAccounts = allParsed.flatMap((p) => p.accounts);
+        const allIncomingSecurities = allParsed.flatMap((p) => p.securities);
+        const allIncomingTxs = allParsed.flatMap((p) => p.transactions);
+
+        setAccounts((prev) => mergeAccounts(prev, allIncomingAccounts));
+        setSecurities((prev) => mergeSecurities(prev, allIncomingSecurities));
+
+        let updatedTxList: Transaction[] = [];
+        setTransactions((prev) => {
+          updatedTxList = upsertTransactions(prev, allIncomingTxs);
+          return updatedTxList;
         });
 
-        // Merge securities
-        setSecurities((prev) => {
-          const map = new Map<string, SecurityMaster>(prev.map((s) => [s.id, s]));
-          allParsed.forEach((parsed) => {
-            parsed.securities.forEach((s) => map.set(s.id, s));
-          });
-          return Array.from(map.values());
-        });
-
-        // Merge transactions (upsert by ID, do not wipe earlier years)
-        let mergedTxList: Transaction[] = [];
-        setTransactions((prev: Transaction[]) => {
-          const map = new Map<string, Transaction>(prev.map((t) => [t.id, t]));
-          
-          allParsed.forEach((parsed) => {
-            parsed.transactions.forEach((t: Transaction) => {
-              if (t.isCancelled) {
-                map.delete(t.id);
-                return;
-              }
-              const existing = map.get(t.id);
-              if (existing && existing.status === 'approved' && existing.corporateAction && t.status === 'needs_review') {
-                t.status = 'approved';
-                t.corporateAction = existing.corporateAction;
-              }
-              map.set(t.id, t);
-            });
-          });
-          
-          mergedTxList = Array.from(map.values()).sort((a: Transaction, b: Transaction) => a.date.localeCompare(b.date));
-          return mergedTxList;
-        });
-
-        // Use open positions from the most recent result
         if (allParsed.length > 0) {
-          setOpenPositions(allParsed[allParsed.length - 1].openPositions);
+          const latestPositions = allParsed[allParsed.length - 1].openPositions;
+          if (latestPositions && latestPositions.length > 0) {
+            setOpenPositions((prev) => mergeOpenPositions(prev, latestPositions));
+          }
         }
 
         setFlexConfig((prev) => ({
@@ -300,18 +327,38 @@ export function App() {
           lastSyncReferenceCode: results[results.length - 1].referenceCode,
         }));
 
-        // Calculate trade range for status alert
-        const tradeDates = mergedTxList.map((t) => t.date).sort();
+        const tradeDates = updatedTxList.map((t) => t.date).sort();
         const firstTradeDate = tradeDates[0] || 'N/A';
         const lastTradeDate = tradeDates[tradeDates.length - 1] || 'N/A';
 
-        const unavailStr = unavailableYears.length > 0 ? ` (Unavailable/empty years: ${unavailableYears.join(', ')})` : '';
-        alert(`Pulled IBKR history from ${firstTradeDate} to ${lastTradeDate}. History before ${firstTradeDate} needs Opening ACB.${unavailStr}`);
+        const unavailDetails =
+          unavailableYears.length > 0
+            ? [`Unavailable / empty years during year walk: ${unavailableYears.join(', ')}`]
+            : undefined;
+
+        setSyncBanner({
+          type: 'success',
+          title: 'IBKR Flex Sync Completed',
+          message: `Pulled IBKR history from ${firstTradeDate} to ${lastTradeDate}. History before ${firstTradeDate} needs Opening ACB.`,
+          details: unavailDetails,
+        });
       } else {
-        alert(`No data retrieved from IBKR. Unavailable/empty years: ${unavailableYears.join(', ')}`);
+        setSyncBanner({
+          type: 'info',
+          title: 'No Data Retrieved from IBKR',
+          message: 'No trade history returned for the requested date range.',
+          details:
+            unavailableYears.length > 0
+              ? [`Unavailable / empty years: ${unavailableYears.join(', ')}`]
+              : undefined,
+        });
       }
     } catch (e: any) {
-      alert(`Sync error: ${e.message}`);
+      setSyncBanner({
+        type: 'error',
+        title: 'IBKR Sync Error',
+        message: e.message || 'Unexpected error during sync',
+      });
     } finally {
       setIsSyncing(false);
     }
@@ -340,47 +387,23 @@ export function App() {
       setSecurities(data.securities);
       setTransactions(data.transactions.sort((a: Transaction, b: Transaction) => a.date.localeCompare(b.date)));
       setOpenPositions(data.openPositions || []);
+      setSyncBanner({
+        type: 'info',
+        title: 'Import Completed (Replace Mode)',
+        message: `Loaded ${data.transactions.length} transactions, replacing previous ledger.`,
+      });
     } else {
-      // Merge accounts
-      setAccounts((prev) => {
-        const map = new Map(prev.map((a) => [a.id, a]));
-        data.accounts.forEach((a) => map.set(a.id, a));
-        return Array.from(map.values());
-      });
-
-      // Merge securities
-      setSecurities((prev) => {
-        const map = new Map(prev.map((s) => [s.id, s]));
-        data.securities.forEach((s) => map.set(s.id, s));
-        return Array.from(map.values());
-      });
-
-      // Merge transactions by transaction ID (upsert)
-      setTransactions((prev) => {
-        const map = new Map<string, Transaction>(prev.map((t) => [t.id, t]));
-        data.transactions.forEach((t) => {
-          if (t.isCancelled) {
-            map.delete(t.id);
-          } else {
-            const existing = map.get(t.id);
-            if (existing && existing.status === 'approved' && existing.corporateAction && t.status === 'needs_review') {
-              t.status = 'approved';
-              t.corporateAction = existing.corporateAction;
-            }
-            map.set(t.id, t);
-          }
-        });
-        return Array.from(map.values()).sort((a: Transaction, b: Transaction) => a.date.localeCompare(b.date));
-      });
-
-      // Merge open positions
+      setAccounts((prev) => mergeAccounts(prev, data.accounts));
+      setSecurities((prev) => mergeSecurities(prev, data.securities));
+      setTransactions((prev) => upsertTransactions(prev, data.transactions));
       if (data.openPositions && data.openPositions.length > 0) {
-        setOpenPositions((prev) => {
-          const map = new Map(prev.map((p) => [`${p.accountId}_${p.securityId}`, p]));
-          data.openPositions.forEach((p) => map.set(`${p.accountId}_${p.securityId}`, p));
-          return Array.from(map.values());
-        });
+        setOpenPositions((prev) => mergeOpenPositions(prev, data.openPositions));
       }
+      setSyncBanner({
+        type: 'success',
+        title: 'Import Completed (Merge Mode)',
+        message: `Merged statement data into existing ledger.`,
+      });
     }
   };
 
@@ -418,7 +441,7 @@ export function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F9FAFB] text-[#18181B] flex flex-col font-sans selection:bg-blue-100 selection:text-blue-900">
+    <div className="min-h-screen bg-slate-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex flex-col font-sans selection:bg-blue-100 dark:selection:bg-blue-900 selection:text-blue-900 dark:selection:text-blue-100 transition-colors">
       
       {/* Top CPA Disclaimer Banner */}
       <DisclaimerBanner />
@@ -436,10 +459,49 @@ export function App() {
         onOpenImport={() => setIsImportOpen(true)}
         onTriggerSync={() => handleTriggerSync(false)}
         isSyncing={isSyncing}
+        theme={theme}
+        toggleTheme={toggleTheme}
       />
 
       {/* Main Viewport */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Status Notification Banner */}
+        {syncBanner && (
+          <div
+            className={`mb-6 p-4 rounded-2xl border text-xs flex items-start justify-between gap-3 shadow-2xs transition-all animate-in fade-in slide-in-from-top-2 ${
+              syncBanner.type === 'success'
+                ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                : syncBanner.type === 'error'
+                ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
+                : 'bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300'
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              {syncBanner.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />}
+              {syncBanner.type === 'error' && <AlertCircle className="w-5 h-5 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />}
+              {syncBanner.type === 'info' && <Info className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />}
+              <div>
+                <div className="font-bold text-sm text-zinc-900 dark:text-zinc-100">{syncBanner.title}</div>
+                <div className="mt-0.5 leading-relaxed">{syncBanner.message}</div>
+                {syncBanner.details && syncBanner.details.length > 0 && (
+                  <ul className="mt-1.5 list-disc list-inside space-y-0.5 opacity-90">
+                    {syncBanner.details.map((d, idx) => (
+                      <li key={idx}>{d}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => setSyncBanner(null)}
+              className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors shrink-0 text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100"
+              title="Dismiss status banner"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
         {activeTab === 'dashboard' && (
           <DashboardView
             engineOutput={engineOutput}
@@ -526,14 +588,14 @@ export function App() {
       />
 
       {/* Footer */}
-      <footer className="border-t border-[#E4E4E7] bg-white py-4 text-xs text-[#71717A] font-sans">
+      <footer className="border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 py-4 text-xs text-zinc-500 dark:text-zinc-400 font-sans transition-colors">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-[#18181B]">Canadian ACB Engine</span>
+            <span className="font-semibold text-zinc-900 dark:text-zinc-100">Canadian ACB Engine</span>
             <span>•</span>
             <span>Income Tax Act (Canada) Compliance</span>
           </div>
-          <span className="text-[11px] text-[#A1A1AA] font-mono">ITA ss. 40, 47, 53, 54, 85.1, 86, 86.1, 87, 261</span>
+          <span className="text-[11px] text-zinc-400 dark:text-zinc-500 font-mono">ITA ss. 40, 47, 53, 54, 85.1, 86, 86.1, 87, 261</span>
         </div>
       </footer>
 

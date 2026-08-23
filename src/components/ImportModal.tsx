@@ -30,9 +30,23 @@ export const ImportModal: React.FC<ImportModalProps> = ({
 
   if (!isOpen) return null;
 
+  const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (file.size > MAX_FILE_SIZE) {
+      setErrorMsg('File size exceeds 20MB limit. Please upload a smaller XML/CSV file.');
+      return;
+    }
+
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    if (ext && !['xml', 'csv', 'txt'].includes(ext)) {
+      setErrorMsg('Unsupported file extension. Please upload an .xml or .csv statement.');
+      return;
+    }
+
     setFileName(file.name);
     setErrorMsg('');
 

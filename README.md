@@ -4,6 +4,35 @@ Local web application that calculates Canadian adjusted cost base (ACB) and capi
 
 This application is an educational and tax-prep utility, not a filed return, legal advice, or official CPA counsel. Do not rely on IBKR's U.S. FIFO or T5008 figures for Canadian tax filing. Never commit Flex XML statements, API tokens, or account numbers to version control.
 
+## Empty UI & Getting Started
+
+Upon first launch, the application displays an **empty UI** with no default transactions loaded. To begin tracking your Canadian tax ledger, choose one of two options:
+1. **Pull via IBKR Flex API**: Configure your Query ID in the **Connections** tab or `.env` and click **Sync / Backfill**.
+2. **Import Statement File**: Click **Import** in the top navigation bar to upload an IBKR Flex XML or Activity CSV file.
+
+## Import Strategies: Merge vs. Replace
+
+When uploading a statement or syncing data:
+- **Merge Additional Year (Default)**: Deduplicates and upserts trades by transaction ID. Preserves existing years, corporate action approvals, and manual entries while merging incoming accounts and securities.
+- **Replace All**: Wipes the current local browser ledger and reinitializes state using the newly uploaded statement.
+
+## IBKR Flex Limits & Backfill Walk
+
+- **365-Day Request Limit**: IBKR Flex Web Service caps each query response to a maximum of 365 calendar days.
+- **Full Backfill Walk**: The **Full Backfill** button automatically executes sequential 365-day requests across the 4 prior CRA tax years plus the current calendar year (`currentYear - 4` through `currentYear`).
+- **Incremental Sync**: Subsequent syncs query only the date range from `lastSuccessDate - 3 days` to today to capture late settlements or adjustments.
+
+## Opening ACB Requirement
+
+Trade history pulled from IBKR reflects only trades within the query date range. If you held positions established before your earliest statement date:
+- You **must add an Opening ACB entry** (via Manual Entry or Opening Position) for the date preceding your first recorded trade.
+- Without an Opening ACB, dispositions of pre-existing positions will calculate incorrect cost bases.
+
+## T5008 Reconciliation: Proceeds vs. Book Value
+
+- **Do NOT copy IBKR T5008 Book Value (Box 20) onto CRA Schedule 3**: T5008 book value reported by brokers often uses U.S. FIFO rules, excludes Superficial Loss adjustments, or ignores foreign FX conversions.
+- **Use T5008 to check Proceeds (Box 21)**: Use the app's **T5008 Reconciliation** tool in **Tax Reports** to verify that gross proceeds reported to the CRA match your ledger, while using this app's calculated ACB for filing Schedule 3.
+
 ## Local Setup
 
 ### 1. Prerequisites
@@ -39,7 +68,7 @@ npm run dev
 Open `http://localhost:3000` in your browser.
 
 ### 5. Run Test Suite & E2E Report
-`bun run e2e:report` executes `scripts/e2e-report.ts` via `tsx` to verify all test fixtures:
+`bun run e2e:report` (or `npm run e2e:report`) executes `scripts/e2e-report.ts` via `tsx` to verify all test fixtures and section 47 tax math:
 ```bash
 bun run e2e:report
 # Or test with an external Flex XML statement (outside workspace):
@@ -50,26 +79,24 @@ bun run e2e:report --flex /path/to/statement.xml
 - **Stop server**: Press `Ctrl+C` in the terminal.
 - **Reset local data**: Clear browser `localStorage` key `canadian_acb_data_v1`.
 
-### Security
-- `.env`, `data/`, `*.xml`, and `*flex*` files are ignored by `.gitignore`.
-- Your `IBKR_FLEX_TOKEN` resides strictly on the server in `.env` and is never exposed to browser client code.
-- Default IBKR token expiration is 6 hours; set it to 1 year in IBKR Client Portal to prevent sync breaks.
-- Never push raw Flex statements or credentials to git repositories.
+## Security & Storage Architecture
 
-## IBKR Setup
+- **Token Safety**: Your `IBKR_FLEX_TOKEN` is strictly stored server-side in `.env` (or requested via server proxy) and is **never** saved to `localStorage` or exposed in the client JavaScript bundle.
+- **Browser-Only Storage**: `localStorage` holds your full tax ledger locally in browser storage (`canadian_acb_data_v1`). It is local device storage, not a remote cloud vault.
+- **Privacy First**: Application logs do not record `accountId`s, client names, or raw Flex XML payloads.
+- **Git Hygiene**: `.env`, `data/`, `*.xml`, and `*flex*` files are strictly ignored by `.gitignore`. Never push raw Flex XML statements or tokens to git repositories.
 
-Refer to the in-app **Connections** tab for full interactive instructions:
+## IBKR Flex Setup Guide
+
 1. Log in to IBKR Client Portal → **Performance & Reports → Flex Queries**.
 2. Create an **Activity Flex Query** only (not Trade Confirmation).
-3. Generate a token in **Flex Web Service Configuration** and save your saved **Query ID**.
+3. Generate a token in **Flex Web Service Configuration** and copy your **Query ID**.
 4. In query section configuration, open **Trades** and set detail level to **Executions** (not Orders or Closed Lots).
 5. Enable required sections: **Trades**, **Cash Transactions**, **Corporate Actions**, **Transfers**, **Open Positions**, **Account Information**, and **Financial Instrument Information** (**Option EAE** if present). Exchange rates are included via `FX Rate to Base`.
 6. Set Delivery Format to **XML**, Period to **Last 365 Calendar Days**, Date Format to **yyyy-MM-dd**, Include Currency Rates to **Yes**, and Include Canceled Trades to **Yes**.
 7. In the app, map account tax types (Taxable vs TFSA/RRSP/FHSA) and run Backfill.
 
 ## Application Map
-
-The application is structured into functional tabs for managing tax calculations:
 
 | Area | What the user does there |
 |---|---|
@@ -81,33 +108,6 @@ The application is structured into functional tabs for managing tax calculations
 | **Accounts** | Map accounts as taxable vs registered (TFSA/RRSP/FHSA) and tag household affiliates. |
 | **Settings** | Select FX rate source (Bank of Canada vs broker), tax inclusion rate, and day-trader warning. |
 | **Help & Guide** | Complete guide on Activity Flex Query setup, CRA average cost rules, and filing instructions. |
-
-### Engine Core
-- Calculates one shared taxable ACB pool per identical security across all non-registered accounts (ITA s. 47).
-- Registered accounts (TFSA, RRSP, FHSA) are tracked separately and never enter the taxable ACB pool.
-- All transactions convert to CAD on trade date; currency fluctuations are embedded inside the capital gain.
-- Identifies superficial losses (30 days before/after); repurchases in registered accounts result in permanent loss denial.
-- IBKR `fifoPnlRealized` values are parsed for comparison only and do not drive Canadian tax totals.
-
-## Project Layout
-
-- `src/engine/` — Core Canadian ACB engine (`acbEngine.ts`), Bank of Canada FX rates (`bocFx.ts`), Decimal math (`decimal.ts`), and test fixtures (`testFixtures.ts`).
-- `src/parsers/` — IBKR Flex Web Service XML parser (`ibkrFlexXmlParser.ts`).
-- `src/services/` — IBKR Flex Web Service API client (`ibkrFlexService.ts`).
-- `src/components/` — React UI components for Dashboard, Ledger, Connections, Reports, etc.
-- `server.ts` — Express proxy server for IBKR Flex Web Service, Bank of Canada FX, and Gemini AI.
-- `scripts/` — CLI utilities (`e2e-report.ts` for fixture verification and external statement audit).
-
-## Troubleshooting
-
-| Issue | Root Cause & Resolution |
-|---|---|
-| **Blank page or port conflict** | Port 3000 is occupied. Stop running Node processes or restart dev server. |
-| **IBKR Error 1012 / 1015** | Token expired or Query ID invalid. Generate a new token in IBKR Client Portal. |
-| **"Executions not found"** | In IBKR Flex Query, open Trades section and set detail level dropdown to **Executions**. |
-| **Date parse errors** | Set General Configuration **Date Format** to `yyyy-MM-dd` in IBKR Flex Query settings. |
-| **Quantity discrepancy after sync** | Unreviewed corporate actions pending in Review Queue. Confirm treatments to post. |
-| **Fixtures failing** | Run `bun run e2e:report`. Fix any tax engine regression before filing. |
 
 ---
 *Disclaimer: This software is an educational calculation tool and does not constitute professional tax, accounting, or legal advice. Consult a qualified Canadian Chartered Professional Accountant (CPA) for tax filing guidance.*

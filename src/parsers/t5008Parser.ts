@@ -1,5 +1,6 @@
 import { T5008SlipEntry } from '../types/tax';
 import { getBankOfCanadaRate } from '../engine/bocFx';
+import { d, toMoney, toShares } from '../engine/decimal';
 
 /**
  * Parses a T5008 CSV or CRA Slip export.
@@ -55,10 +56,11 @@ export function parseT5008Csv(csvContent: string, taxYear?: number): T5008SlipEn
     date = normalizeDate(date);
     if (!date) continue;
 
-    // Clean numeric values
-    const cleanQty = Math.abs(parseFloat(qtyStr.replace(/[$, ]/g, '')) || 0);
-    const cleanProceeds = parseFloat(proceedsStr.replace(/[$, ]/g, '')) || 0;
-    const cleanCost = costStr ? parseFloat(costStr.replace(/[$, ]/g, '')) : undefined;
+    // Clean numeric values using Decimal math
+    const cleanQtyDec = d(qtyStr).abs();
+    const cleanProceedsDec = d(proceedsStr);
+    const hasCost = costStr && costStr.trim() !== '' && costStr.trim() !== '0';
+    const cleanCostDec = hasCost ? d(costStr) : undefined;
 
     const rowYear = parseInt(date.substring(0, 4), 10);
     if (taxYear && rowYear !== taxYear) {
@@ -73,14 +75,14 @@ export function parseT5008Csv(csvContent: string, taxYear?: number): T5008SlipEn
 
     const upperCurr = (currency || 'CAD').toUpperCase();
     let fxRate = 1.0;
-    let proceedsCadVal = cleanProceeds;
-    let bookValueCadVal = cleanCost;
+    let proceedsCadDec = cleanProceedsDec;
+    let bookValueCadDec = cleanCostDec;
 
     if (upperCurr !== 'CAD') {
       fxRate = getBankOfCanadaRate(date, upperCurr);
-      proceedsCadVal = cleanProceeds * fxRate;
-      if (cleanCost !== undefined && !isNaN(cleanCost)) {
-        bookValueCadVal = cleanCost * fxRate;
+      proceedsCadDec = cleanProceedsDec.times(fxRate);
+      if (cleanCostDec !== undefined) {
+        bookValueCadDec = cleanCostDec.times(fxRate);
       }
     }
 
@@ -90,14 +92,14 @@ export function parseT5008Csv(csvContent: string, taxYear?: number): T5008SlipEn
       date,
       symbol,
       securityDescription: symbol,
-      quantity: cleanQty.toString(),
-      proceedsCad: proceedsCadVal.toFixed(2),
-      bookValueCad: bookValueCadVal !== undefined && !isNaN(bookValueCadVal) ? bookValueCadVal.toFixed(2) : undefined,
+      quantity: toShares(cleanQtyDec),
+      proceedsCad: toMoney(proceedsCadDec),
+      bookValueCad: bookValueCadDec !== undefined ? toMoney(bookValueCadDec) : undefined,
       currency: upperCurr,
       fxRateUsed: fxRate,
       originalCurrency: upperCurr,
-      originalProceeds: cleanProceeds.toFixed(2),
-      originalBookValue: cleanCost !== undefined && !isNaN(cleanCost) ? cleanCost.toFixed(2) : undefined,
+      originalProceeds: toMoney(cleanProceedsDec),
+      originalBookValue: cleanCostDec !== undefined ? toMoney(cleanCostDec) : undefined,
       rawLine,
     });
   }
