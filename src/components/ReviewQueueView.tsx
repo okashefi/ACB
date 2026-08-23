@@ -33,6 +33,7 @@ interface ReviewQueueViewProps {
       userNotes?: string;
     }
   ) => void;
+  onOpenManualEntry?: (mode: 'STANDARD' | 'OPENING_ACB', symbol: string) => void;
 }
 
 export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
@@ -40,6 +41,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
   securities,
   securityBalances,
   onConfirmTreatment,
+  onOpenManualEntry,
   reconciliationBreaks = [],
 }) => {
   const pendingTx = transactions.filter((t) => t.status === 'needs_review');
@@ -269,7 +271,72 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
         </div>
 
         {/* Right 2 Cols: Interactive Review Card & Decision Tree */}
-        {activeTx && (
+        {activeTx && (activeTx.reasonCode === 'MISSING_ACB' || activeTx.reasonCode === 'QTY_SHORTFALL' || !activeTx.corporateAction) ? (
+          <div className="lg:col-span-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 shadow-2xs space-y-6">
+            <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center border border-amber-200 dark:border-amber-800">
+                  <ShieldAlert className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                    <span>{activeTx.symbol}</span>
+                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-200 font-mono font-medium border border-amber-300 dark:border-amber-800">
+                      ACB unknown — not reported as a gain yet
+                    </span>
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 font-mono">
+                    Transaction Date: {activeTx.date} • ID: {activeTx.id}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 font-mono text-xs">
+              <div className="p-4 bg-slate-50 dark:bg-zinc-800/60 rounded-xl border border-zinc-200 dark:border-zinc-800">
+                <div className="text-[10px] text-zinc-500 dark:text-zinc-400 uppercase font-sans font-semibold">Quantity Disposed</div>
+                <div className="text-base font-bold text-zinc-900 dark:text-zinc-100 mt-1">{formatShares(activeTx.quantity)}</div>
+              </div>
+              <div className="p-4 bg-slate-50 dark:bg-zinc-800/60 rounded-xl border border-zinc-200 dark:border-zinc-800">
+                <div className="text-[10px] text-zinc-500 dark:text-zinc-400 uppercase font-sans font-semibold">Quantity Known in Pool</div>
+                <div className="text-base font-bold text-amber-600 dark:text-amber-400 mt-1">{formatShares(oldSharesHeld)}</div>
+              </div>
+              <div className="p-4 bg-slate-50 dark:bg-zinc-800/60 rounded-xl border border-zinc-200 dark:border-zinc-800">
+                <div className="text-[10px] text-zinc-500 dark:text-zinc-400 uppercase font-sans font-semibold">Gross Proceeds (CAD)</div>
+                <div className="text-base font-bold text-emerald-600 dark:text-emerald-400 mt-1">{formatCad(activeTx.amountCad)}</div>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 space-y-2 text-xs text-amber-900 dark:text-amber-200">
+              <div className="font-semibold flex items-center gap-2">
+                <Info className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                <span>Action Required: Provide Acquisition Cost Base</span>
+              </div>
+              <p className="leading-relaxed font-sans">
+                {activeTx.reviewNotes || "This sale has no (or not enough) known acquisitions. Enter Opening ACB or import earlier buys (price, date, qty, CAD)."}
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-end gap-3 border-t border-zinc-200 dark:border-zinc-800 pt-4">
+              <button
+                id="btn-add-opening-acb-review"
+                onClick={() => onOpenManualEntry?.('OPENING_ACB', activeTx.symbol)}
+                className="w-full sm:w-auto px-4 py-2.5 bg-zinc-900 dark:bg-zinc-100 hover:bg-black dark:hover:bg-white text-white dark:text-zinc-900 text-xs font-semibold rounded-xl shadow-2xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <DollarSign className="w-4 h-4" />
+                <span>Add Opening ACB</span>
+              </button>
+              <button
+                id="btn-add-missing-buy-review"
+                onClick={() => onOpenManualEntry?.('STANDARD', activeTx.symbol)}
+                className="w-full sm:w-auto px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-2xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <ArrowRight className="w-4 h-4" />
+                <span>Add Missing Buy</span>
+              </button>
+            </div>
+          </div>
+        ) : activeTx ? (
           <div className="lg:col-span-2 bg-white border border-[#E4E4E7] rounded-2xl p-6 shadow-2xs space-y-6">
             
             {/* Broker Description Banner */}
@@ -573,7 +640,7 @@ export const ReviewQueueView: React.FC<ReviewQueueViewProps> = ({
             </div>
 
           </div>
-        )}
+        ) : null}
 
       </div>
 

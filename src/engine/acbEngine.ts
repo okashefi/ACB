@@ -290,7 +290,7 @@ export function runAcbEngine(
       continue;
     }
 
-    if (tx.status === 'needs_review') {
+    if (tx.status === 'needs_review' && tx.reasonCode !== 'MISSING_ACB' && tx.reasonCode !== 'QTY_SHORTFALL') {
       blockedSecurities.add(canonicalId);
     }
     if (blockedSecurities.has(canonicalId)) {
@@ -729,7 +729,53 @@ export function runAcbEngine(
 
       // Taxable -> Registered transfer: deemed disposition at FMV on the taxable pool
       const qtyDisposed = d(tx.quantity);
+      const heldQty = book.quantity;
+      const totalAcb = book.totalAcbCad;
       const perUnitAcb = book.acbPerUnitCad;
+
+      const isMissingAcb = heldQty.isZero() || (totalAcb.isZero() && heldQty.greaterThan(0));
+      const isShortfall = qtyDisposed.greaterThan(heldQty.plus(0.0001));
+
+      if (isMissingAcb || isShortfall) {
+        tx.status = 'needs_review';
+        tx.reasonCode = (heldQty.isZero() || totalAcb.isZero()) ? 'MISSING_ACB' : 'QTY_SHORTFALL';
+        tx.reviewNotes = 'This transfer out has no (or not enough) known acquisitions. Enter Opening ACB or import earlier buys (price, date, qty, CAD).';
+
+        ledger.push({
+          id: `LED_${tx.id}`,
+          date: tx.date,
+          securityId: canonicalId,
+          symbol: canonicalSym,
+          transactionId: tx.id,
+          transactionType: tx.transactionType,
+          description: `Transfer Out of ${toShares(qtyDisposed)} units to ${dstAcctType?.toUpperCase() || 'REGISTERED'} (ACB unknown — missing acquisition cost)`,
+          quantityChange: toShares(qtyDisposed.negated()),
+          runningQuantity: toShares(book.quantity),
+          costChangeCad: '0.00',
+          runningTotalAcbCad: toMoney(book.totalAcbCad),
+          runningAcbPerUnitCad: toMoney(book.acbPerUnitCad),
+          realizedGainLossCad: undefined,
+          originalCurrency: tx.currency,
+          fxRateUsed: toRate(d(tx.fxRate || 1)),
+          fxRateSource: tx.fxRateSource,
+          statutoryRule: 'ACB Unknown — Missing Acquisition Cost',
+          notes: 'ACB unknown — not reported as a gain yet. Enter Opening ACB or missing buys.',
+        });
+
+        auditTrail.push(
+          `[${tx.date}] TRANSFER_OUT ${toShares(qtyDisposed)} ${canonicalSym}: Flagged ${tx.reasonCode}. Gain for missing ACB not calculated.`
+        );
+        continue;
+      }
+
+      if (tx.reasonCode === 'MISSING_ACB' || tx.reasonCode === 'QTY_SHORTFALL') {
+        tx.reasonCode = undefined;
+        tx.reviewNotes = undefined;
+        if ((tx.status as string) === 'needs_review') {
+          tx.status = 'approved';
+        }
+      }
+
       const acbRemoved = perUnitAcb.times(qtyDisposed);
       const grossProceeds = d(tx.amountCad); // FMV in CAD
       const outlays = d(tx.commissionCad).plus(d(tx.taxes || 0));
@@ -829,7 +875,129 @@ export function runAcbEngine(
       tx.transactionType === 'WORTHLESS_SECURITIES_S50'
     ) {
       const qtyDisposed = d(tx.quantity);
+      const heldQty = book.quantity;
+      const totalAcb = book.totalAcbCad;
       const perUnitAcb = book.acbPerUnitCad;
+
+      // Check if missing ACB or shortfall
+      const isMissingAcb = heldQty.isZero() || (totalAcb.isZero() && heldQty.greaterThan(0));
+      const isShortfall = qtyDisposed.greaterThan(heldQty.plus(0.0001));
+
+      if (isMissingAcb || isShortfall) {
+        tx.status = 'needs_review';
+        tx.reasonCode = (heldQty.isZero() || totalAcb.isZero()) ? 'MISSING_ACB' : 'QTY_SHORTFALL';
+        tx.reviewNotes = 'This sale has no (or not enough) known acquisitions. Enter Opening ACB or import earlier buys (price, date, qty, CAD).';
+
+        // Covered portion check
+        const coveredQty = (heldQty.greaterThan(0) && totalAcb.greaterThan(0))
+          ? Decimal.min(heldQty, qtyDisposed)
+          : d(0);
+        const shortfallQty = qtyDisposed.minus(coveredQty);
+
+        if (coveredQty.greaterThan(0)) {
+          const coveredRatio = coveredQty.div(qtyDisposed);
+          const coveredAcbRemoved = coveredQty.times(perUnitAcb);
+          const grossProceeds = d(tx.amountCad);
+          const outlays = d(tx.commissionCad).plus(d(tx.taxes || 0));
+          const coveredGrossProceeds = grossProceeds.times(coveredRatio);
+          const coveredOutlays = outlays.times(coveredRatio);
+          const coveredNetProceeds = coveredGrossProceeds.minus(coveredOutlays);
+          const coveredRawGainLoss = coveredNetProceeds.minus(coveredAcbRemoved);
+
+          // Update pool for covered portion
+          book.quantity = Decimal.max(0, book.quantity.minus(coveredQty));
+          book.totalAcbCad = Decimal.max(0, book.totalAcbCad.minus(coveredAcbRemoved));
+          updateBookAverages(book);
+
+          recordRollforward(txYear, canonicalId, canonicalSym, secName, (rf) => {
+            rf.dispositionsQuantity = toShares(d(rf.dispositionsQuantity).plus(coveredQty));
+            rf.dispositionsAcbRemovedCad = toMoney(d(rf.dispositionsAcbRemovedCad).plus(coveredAcbRemoved));
+            rf.realizedGainLossTotalCad = toMoney(d(rf.realizedGainLossTotalCad).plus(coveredRawGainLoss));
+          });
+
+          realizedGainsLosses.push({
+            id: `RGL_${tx.id}`,
+            taxYear: txYear,
+            dispositionDate: tx.date,
+            settlementDate: tx.settlementDate,
+            securityId: canonicalId,
+            symbol: canonicalSym,
+            securityName: secName,
+            assetClass: sec?.assetClass || 'STK',
+            quantityDisposed: toShares(coveredQty),
+            grossProceedsCad: toMoney(coveredGrossProceeds),
+            dispositionOutlaysCad: toMoney(coveredOutlays),
+            netProceedsCad: toMoney(coveredNetProceeds),
+            acbPerUnitPriorCad: toMoney(perUnitAcb),
+            acbOfUnitsDisposedCad: toMoney(coveredAcbRemoved),
+            rawGainLossCad: toMoney(coveredRawGainLoss),
+            isSuperficialLoss: false,
+            superficialLossDeniedCad: '0.00',
+            isPermanentlyDeniedInRegistered: false,
+            recognizedGainLossCad: toMoney(coveredRawGainLoss),
+            dispositionTransactionId: tx.id,
+            statutoryCitations: ['ITA s. 40(1)(a)', 'ITA s. 47'],
+            explanation: `Disposed ${toShares(coveredQty)} covered units at net proceeds $${toMoney(coveredNetProceeds)} CAD vs ACB $${toMoney(coveredAcbRemoved)} CAD. Remaining ${toShares(shortfallQty)} units flagged QTY_SHORTFALL (ACB unknown — not reported as a gain yet).`,
+          });
+
+          ledger.push({
+            id: `LED_${tx.id}`,
+            date: tx.date,
+            securityId: canonicalId,
+            symbol: canonicalSym,
+            transactionId: tx.id,
+            transactionType: tx.transactionType,
+            description: `Disposition of ${toShares(qtyDisposed)} units (${toShares(coveredQty)} covered against $${toMoney(coveredAcbRemoved)} ACB; ${toShares(shortfallQty)} units ACB unknown)`,
+            quantityChange: toShares(qtyDisposed.negated()),
+            runningQuantity: toShares(book.quantity),
+            costChangeCad: toMoney(coveredAcbRemoved.negated()),
+            runningTotalAcbCad: toMoney(book.totalAcbCad),
+            runningAcbPerUnitCad: toMoney(book.acbPerUnitCad),
+            realizedGainLossCad: toMoney(coveredRawGainLoss),
+            originalCurrency: tx.currency,
+            fxRateUsed: toRate(d(tx.fxRate || 1)),
+            fxRateSource: tx.fxRateSource,
+            statutoryRule: 'ITA s. 40(1)(a) Capital Gain/Loss Disposition (Partial Shortfall)',
+            notes: `ACB unknown for ${toShares(shortfallQty)} units — gain for shortfall portion not reported yet. Enter Opening ACB or missing buys.`,
+          });
+        } else {
+          // 0 covered shares
+          ledger.push({
+            id: `LED_${tx.id}`,
+            date: tx.date,
+            securityId: canonicalId,
+            symbol: canonicalSym,
+            transactionId: tx.id,
+            transactionType: tx.transactionType,
+            description: `Disposition of ${toShares(qtyDisposed)} units (ACB unknown — missing acquisition cost)`,
+            quantityChange: toShares(qtyDisposed.negated()),
+            runningQuantity: toShares(book.quantity),
+            costChangeCad: '0.00',
+            runningTotalAcbCad: toMoney(book.totalAcbCad),
+            runningAcbPerUnitCad: toMoney(book.acbPerUnitCad),
+            realizedGainLossCad: undefined,
+            originalCurrency: tx.currency,
+            fxRateUsed: toRate(d(tx.fxRate || 1)),
+            fxRateSource: tx.fxRateSource,
+            statutoryRule: 'ACB Unknown — Missing Acquisition Cost',
+            notes: 'ACB unknown — not reported as a gain yet. Enter Opening ACB or missing buys.',
+          });
+        }
+
+        auditTrail.push(
+          `[${tx.date}] SELL ${toShares(qtyDisposed)} ${canonicalSym}: Flagged ${tx.reasonCode}. Gain for missing ACB not calculated.`
+        );
+        continue;
+      }
+
+      if (tx.reasonCode === 'MISSING_ACB' || tx.reasonCode === 'QTY_SHORTFALL') {
+        tx.reasonCode = undefined;
+        tx.reviewNotes = undefined;
+        if ((tx.status as string) === 'needs_review') {
+          tx.status = 'approved';
+        }
+      }
+
       const acbRemoved = perUnitAcb.times(qtyDisposed);
       const grossProceeds = d(tx.amountCad);
       const outlays = d(tx.commissionCad).plus(d(tx.taxes || 0));

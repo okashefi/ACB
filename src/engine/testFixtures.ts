@@ -1116,5 +1116,136 @@ export function runAllTestFixtures(): TestFixtureResult[] {
     });
   }
 
+  // 25. Synthetic Test: Sell 50 SHOP with No Prior Buy (MISSING_ACB)
+  {
+    const start = performance.now();
+    const sec: SecurityMaster = { id: 'SEC_SHOP', symbol: 'SHOP', name: 'Shopify Inc.', assetClass: 'STK', currency: 'CAD' };
+    const txs: Transaction[] = [
+      {
+        id: 'SELL_NO_BUY_1', accountId: 'ACCT_TAXABLE', securityId: 'SEC_SHOP', symbol: 'SHOP', date: '2024-05-10',
+        transactionType: 'SELL', quantity: '50', price: '100', currency: 'CAD', commission: '0', totalGrossAmount: '5000',
+        totalNetAmount: '5000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '5000', commissionCad: '0', totalOutlaysCad: '0',
+        status: 'approved', source: 'TEST_FIXTURE',
+      },
+    ];
+
+    const out = runAcbEngine(txs, [taxableAcct], [sec]);
+    const txResult = txs[0];
+    const rglCount = out.realizedGainsLosses.length;
+    const ledgerLine = out.ledger[0];
+
+    const passed = txResult.status === 'needs_review' &&
+      txResult.reasonCode === 'MISSING_ACB' &&
+      rglCount === 0 &&
+      ledgerLine !== undefined &&
+      ledgerLine.realizedGainLossCad === undefined;
+
+    results.push({
+      id: 'synthetic-missing-acb-sell',
+      name: 'Missing ACB Disposition Protection',
+      category: 'Acquisition Protection',
+      description: 'Selling 50 shares with 0 known acquisitions must NOT compute fake $5,000 gain; flags tx needs_review / MISSING_ACB, omits gain from Schedule 3.',
+      statutoryCitations: ['ITA s. 40(1)', 'ITA s. 47'],
+      passed,
+      expectedResult: 'tx.status: needs_review, reasonCode: MISSING_ACB, Realized Gains Count: 0, Ledger RGL: undefined',
+      actualResult: `tx.status: ${txResult.status}, reasonCode: ${txResult.reasonCode}, Realized Gains Count: ${rglCount}, Ledger RGL: ${ledgerLine?.realizedGainLossCad}`,
+      auditTrail: out.auditTrail,
+      executionTimeMs: performance.now() - start,
+    });
+  }
+
+  // 26. Synthetic Test: Partial Sale Shortfall (Buy 40, Sell 100 -> Covered 40, Shortfall 60)
+  {
+    const start = performance.now();
+    const sec: SecurityMaster = { id: 'SEC_SHOP_2', symbol: 'SHOP', name: 'Shopify Inc.', assetClass: 'STK', currency: 'CAD' };
+    const txs: Transaction[] = [
+      {
+        id: 'BUY_40', accountId: 'ACCT_TAXABLE', securityId: 'SEC_SHOP_2', symbol: 'SHOP', date: '2024-01-10',
+        transactionType: 'BUY', quantity: '40', price: '10', currency: 'CAD', commission: '0', totalGrossAmount: '400',
+        totalNetAmount: '400', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '400', commissionCad: '0', totalOutlaysCad: '0',
+        status: 'approved', source: 'TEST_FIXTURE',
+      },
+      {
+        id: 'SELL_100', accountId: 'ACCT_TAXABLE', securityId: 'SEC_SHOP_2', symbol: 'SHOP', date: '2024-05-10',
+        transactionType: 'SELL', quantity: '100', price: '20', currency: 'CAD', commission: '0', totalGrossAmount: '2000',
+        totalNetAmount: '2000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '2000', commissionCad: '0', totalOutlaysCad: '0',
+        status: 'approved', source: 'TEST_FIXTURE',
+      },
+    ];
+
+    const out = runAcbEngine(txs, [taxableAcct], [sec]);
+    const sellTx = txs[1];
+    const rgl = out.realizedGainsLosses[0];
+
+    const passed = sellTx.status === 'needs_review' &&
+      sellTx.reasonCode === 'QTY_SHORTFALL' &&
+      rgl !== undefined &&
+      Number(rgl.quantityDisposed) === 40 &&
+      Number(rgl.recognizedGainLossCad) === 400; // Proceeds 40*20=$800 - ACB 400 = $400 gain on covered portion
+
+    results.push({
+      id: 'synthetic-shortfall-partial-sell',
+      name: 'Partial Disposition Quantity Shortfall Protection',
+      category: 'Acquisition Protection',
+      description: 'Hold 40, sell 100: computes gain on covered 40 shares ($400 gain), flags 60 shortfall shares as QTY_SHORTFALL / needs_review.',
+      statutoryCitations: ['ITA s. 40(1)', 'ITA s. 47'],
+      passed,
+      expectedResult: 'sellTx.status: needs_review, reasonCode: QTY_SHORTFALL, Covered Qty: 40, Covered Gain: $400.00 CAD',
+      actualResult: `sellTx.status: ${sellTx.status}, reasonCode: ${sellTx.reasonCode}, Covered Qty: ${rgl?.quantityDisposed}, Covered Gain: $${rgl?.recognizedGainLossCad} CAD`,
+      auditTrail: out.auditTrail,
+      executionTimeMs: performance.now() - start,
+    });
+  }
+
+  // 27. Synthetic Test: Replay engine clears MISSING_ACB when Opening ACB added before sale
+  {
+    const start = performance.now();
+    const sec: SecurityMaster = { id: 'SEC_SHOP_3', symbol: 'SHOP', name: 'Shopify Inc.', assetClass: 'STK', currency: 'CAD' };
+    const txs: Transaction[] = [
+      {
+        id: 'OPENING_60', accountId: 'ACCT_TAXABLE', securityId: 'SEC_SHOP_3', symbol: 'SHOP', date: '2024-01-01',
+        transactionType: 'OPENING_BALANCE', quantity: '60', price: '8', currency: 'CAD', commission: '0', totalGrossAmount: '480',
+        totalNetAmount: '480', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '480', commissionCad: '0', totalOutlaysCad: '0',
+        status: 'approved', source: 'TEST_FIXTURE',
+      },
+      {
+        id: 'BUY_40_REPLAY', accountId: 'ACCT_TAXABLE', securityId: 'SEC_SHOP_3', symbol: 'SHOP', date: '2024-01-10',
+        transactionType: 'BUY', quantity: '40', price: '10', currency: 'CAD', commission: '0', totalGrossAmount: '400',
+        totalNetAmount: '400', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '400', commissionCad: '0', totalOutlaysCad: '0',
+        status: 'approved', source: 'TEST_FIXTURE',
+      },
+      {
+        id: 'SELL_100_REPLAY', accountId: 'ACCT_TAXABLE', securityId: 'SEC_SHOP_3', symbol: 'SHOP', date: '2024-05-10',
+        transactionType: 'SELL', quantity: '100', price: '20', currency: 'CAD', commission: '0', totalGrossAmount: '2000',
+        totalNetAmount: '2000', fxRate: '1', fxRateSource: 'BANK_OF_CANADA', amountCad: '2000', commissionCad: '0', totalOutlaysCad: '0',
+        status: 'needs_review', reasonCode: 'QTY_SHORTFALL', source: 'TEST_FIXTURE',
+      },
+    ];
+
+    const out = runAcbEngine(txs, [taxableAcct], [sec]);
+    const sellTx = txs[2];
+    const rgl = out.realizedGainsLosses[0];
+
+    // Total ACB = 480 + 400 = 880. Proceeds = 2000. Realized gain = 1120.
+    const passed = sellTx.status === 'approved' &&
+      sellTx.reasonCode === undefined &&
+      rgl !== undefined &&
+      Number(rgl.quantityDisposed) === 100 &&
+      Number(rgl.recognizedGainLossCad) === 1120;
+
+    results.push({
+      id: 'synthetic-replay-add-opening-acb',
+      name: 'Replay Engine Resolution with Opening ACB',
+      category: 'Replay Engine',
+      description: 'Adding Opening ACB before a flagged sale causes ledger replay to clear QTY_SHORTFALL and accurately calculate $1,120.00 gain across full 100 shares.',
+      statutoryCitations: ['ITA s. 40(1)', 'ITA s. 47'],
+      passed,
+      expectedResult: 'sellTx.status: approved, reasonCode: undefined, Disposed Qty: 100, Gain: $1,120.00 CAD',
+      actualResult: `sellTx.status: ${sellTx.status}, reasonCode: ${sellTx.reasonCode}, Disposed Qty: ${rgl?.quantityDisposed}, Gain: $${rgl?.recognizedGainLossCad} CAD`,
+      auditTrail: out.auditTrail,
+      executionTimeMs: performance.now() - start,
+    });
+  }
+
   return results;
 }

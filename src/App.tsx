@@ -44,6 +44,8 @@ export function App() {
   const [selectedTaxYear, setSelectedTaxYear] = useState<number | 'ALL'>('ALL');
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [isManualEntryOpen, setIsManualEntryOpen] = useState<boolean>(false);
+  const [manualEntryInitialMode, setManualEntryInitialMode] = useState<'STANDARD' | 'OPENING_ACB'>('STANDARD');
+  const [manualEntryInitialSymbol, setManualEntryInitialSymbol] = useState<string>('');
   const [isImportOpen, setIsImportOpen] = useState<boolean>(false);
 
   // Core Data State
@@ -530,6 +532,11 @@ export function App() {
             securityBalances={engineOutput.securityBalances}
             reconciliationBreaks={reconciliationBreaks}
             onConfirmTreatment={handleConfirmTreatment}
+            onOpenManualEntry={(mode, symbol) => {
+              setManualEntryInitialMode(mode);
+              setManualEntryInitialSymbol(symbol);
+              setIsManualEntryOpen(true);
+            }}
           />
         )}
 
@@ -579,6 +586,8 @@ export function App() {
         accounts={displayedAccounts}
         securities={securities}
         onAddTransaction={handleAddTransaction}
+        initialMode={manualEntryInitialMode}
+        initialSymbol={manualEntryInitialSymbol}
       />
 
       <ImportModal

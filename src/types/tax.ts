@@ -190,6 +190,7 @@ export interface Transaction {
 
   // Status and Provenance
   status: ReviewStatus;
+  reasonCode?: 'MISSING_ACB' | 'QTY_SHORTFALL' | string;
   reviewNotes?: string;
   source: 'IBKR_FLEX_API' | 'IBKR_FLEX_FILE' | 'IBKR_CSV' | 'MANUAL_ENTRY' | 'TEST_FIXTURE';
   rawPayloadHash?: string;

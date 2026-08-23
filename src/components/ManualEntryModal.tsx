@@ -24,6 +24,8 @@ interface ManualEntryModalProps {
   accounts: Account[];
   securities: SecurityMaster[];
   onAddTransaction: (tx: Transaction, newSecurity?: SecurityMaster) => void;
+  initialMode?: EntryMode;
+  initialSymbol?: string;
 }
 
 type EntryMode = 'STANDARD' | 'OPENING_ACB' | 'CA_WIZARD' | 'EXERCISE_WIZARD';
@@ -34,12 +36,21 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({
   accounts,
   securities,
   onAddTransaction,
+  initialMode,
+  initialSymbol,
 }) => {
-  const [mode, setMode] = useState<EntryMode>('STANDARD');
+  const [mode, setMode] = useState<EntryMode>(initialMode || 'STANDARD');
 
   // Common fields
   const [accountId, setAccountId] = useState<string>(accounts[0]?.id || 'acc-taxable-1');
-  const [symbol, setSymbol] = useState<string>('RY.TO');
+  const [symbol, setSymbol] = useState<string>(initialSymbol || 'RY.TO');
+
+  React.useEffect(() => {
+    if (isOpen) {
+      if (initialMode) setMode(initialMode);
+      if (initialSymbol) setSymbol(initialSymbol);
+    }
+  }, [isOpen, initialMode, initialSymbol]);
   const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [txType, setTxType] = useState<TransactionType>('BUY');
   const [quantity, setQuantity] = useState<string>('100');

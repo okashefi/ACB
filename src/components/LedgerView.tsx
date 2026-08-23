@@ -17,6 +17,7 @@ import {
   Link as LinkIcon,
   ExternalLink,
   ShieldCheck,
+  AlertTriangle,
 } from 'lucide-react';
 import { CalculationEngineOutput, AcbLedgerEntry, SecurityMaster, Transaction } from '../types/tax';
 import { formatCad, formatShares, formatRate, d } from '../engine/decimal';
@@ -430,6 +431,26 @@ export const LedgerView: React.FC<LedgerViewProps> = ({
                   {activeEntryDetails.description}
                 </p>
               </div>
+
+              {/* Capital Gain/Loss or Missing ACB Banner */}
+              {activeEntryDetails.realizedGainLossCad === undefined || activeEntryDetails.notes?.includes('ACB unknown') || activeEntryDetails.statutoryRule.includes('ACB Unknown') ? (
+                <div className="p-3.5 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-xl space-y-1 text-amber-900 dark:text-amber-200 font-sans">
+                  <div className="font-bold text-xs flex items-center gap-1.5 text-amber-800 dark:text-amber-300">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <span>Gain not calculated — missing acquisition cost</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed">
+                    This disposition lacks known acquisition cost base history. Under Canadian tax rules, a gain cannot be calculated without cost basis. Enter an Opening ACB or missing buys to resolve.
+                  </p>
+                </div>
+              ) : (
+                <div className="p-3 bg-slate-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-800 rounded-xl flex items-center justify-between font-sans">
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400 font-medium">Realized Capital Gain / Loss (CAD):</span>
+                  <span className={`text-sm font-bold font-mono ${d(activeEntryDetails.realizedGainLossCad).gte(0) ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                    {d(activeEntryDetails.realizedGainLossCad).gte(0) ? `+${formatCad(activeEntryDetails.realizedGainLossCad)}` : formatCad(activeEntryDetails.realizedGainLossCad)}
+                  </span>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3 pt-1 font-mono">
                 <div className="p-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700">
